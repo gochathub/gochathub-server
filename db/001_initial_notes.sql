@@ -1,0 +1,4 @@
+-- Claude Code: convert docs/DATABASE.md into real migrations.
+-- This file intentionally contains no executable schema yet.
+-- Do not infer security-sensitive fields from this placeholder.
+-- Use the project database design document as the source of requirements.

@@ -1,0 +1,1458 @@
+openapi: 3.1.0
+info:
+  title: Chat Server API
+  version: 1.0.0
+  description: |
+    API contract for the Go/PostgreSQL chat server.
+    This contract is expanded alongside the implementation; keep generated
+    code synchronized. Web client requirements: docs/WEB_CLIENT.md.
+    Decisions referenced here: docs/DECISIONS.md (ADR-009 receipts, ADR-010
+    contacts, ADR-011 avatars, ADR-013 preferences, ADR-014 CLI accounts).
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: auth
+  - name: users
+  - name: contacts
+  - name: rooms
+  - name: messages
+  - name: attachments
+  - name: devices
+  - name: health
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: healthz
+      responses:
+        "200":
+          description: Healthy
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: readyz
+      responses:
+        "200":
+          description: Ready
+        "503":
+          description: Not ready
+
+  /version:
+    get:
+      tags: [health]
+      operationId: version
+      responses:
+        "200":
+          description: Server version
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version]
+                properties:
+                  version:
+                    type: string
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      security: [{ bearerAuth: [] }]
+      operationId: logout
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+
+  /users/me:
+    get:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: getMe
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+    patch:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: updateMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /users/me/preferences:
+    get:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: getPreferences
+      responses:
+        "200":
+          description: Current preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preferences"
+    patch:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: updatePreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePreferencesRequest"
+      responses:
+        "200":
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preferences"
+
+  /users/me/notifications:
+    get:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: listNotificationModes
+      description: >
+        Caller's explicit notification modes. rows with room_id "" are the
+        default; others are room overrides (docs/REQUIREMENTS.md).
+      responses:
+        "200":
+          description: Notification modes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationMode"
+    post:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: setNotificationMode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetNotificationModeRequest"
+      responses:
+        "204":
+          description: Mode stored
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /users/me/password:
+    patch:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Password changed; all sessions (including this one) revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/search:
+    get:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: searchUsers
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Matching users (public profiles only)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /users/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: getUser
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /contacts:
+    get:
+      tags: [contacts]
+      security: [{ bearerAuth: [] }]
+      operationId: listContacts
+      responses:
+        "200":
+          description: Contacts (the caller's list)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Contact"
+    post:
+      tags: [contacts]
+      security: [{ bearerAuth: [] }]
+      operationId: addContact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddContactRequest"
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Contact"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /contacts/{contactId}:
+    parameters:
+      - $ref: "#/components/parameters/ContactId"
+    delete:
+      tags: [contacts]
+      security: [{ bearerAuth: [] }]
+      operationId: removeContact
+      responses:
+        "204":
+          description: Removed
+
+  /rooms:
+    get:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: listRooms
+      responses:
+        "200":
+          description: Rooms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Room"
+    post:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: createRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoomRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+
+  /rooms/{roomId}:
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+    get:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: getRoom
+      responses:
+        "200":
+          description: Room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+    patch:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: updateRoom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoomRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: archiveRoom
+      description: Archives the room (admins); member-level archive lives on the client.
+      responses:
+        "204":
+          description: Archived
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /rooms/{roomId}/pin:
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+    put:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: pinMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PinRequest"
+      responses:
+        "204":
+          description: Pinned
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: unpinMessage
+      responses:
+        "204":
+          description: Unpinned
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /rooms/{roomId}/members:
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+    get:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: listRoomMembers
+      responses:
+        "200":
+          description: Members (prefs-gated public profiles)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: addRoomMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMemberRequest"
+      responses:
+        "204":
+          description: Added
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /rooms/{roomId}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: removeRoomMember
+      responses:
+        "204":
+          description: Removed
+
+  /rooms/{roomId}/archived:
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+    put:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: setMemberArchive
+      description: >
+        Per-member conversation archive (web client's archived view,
+        docs/CLIENT_WEB.md). Distinct from the admin room-level archive
+        (`DELETE /rooms/{roomId}`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberArchiveRequest"
+      responses:
+        "204":
+          description: Updated
+
+  /rooms/{roomId}/read:
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+    post:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: markRead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PinRequest"
+      responses:
+        "204":
+          description: Read advanced
+
+  /invites:
+    get:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: listMyInvites
+      responses:
+        "200":
+          description: Open invites for the caller
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Invite"
+    post:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: createInvite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInviteRequest"
+      responses:
+        "201":
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invite_id]
+                properties:
+                  invite_id:
+                    type: string
+
+  /invites/{inviteId}/accept:
+    parameters:
+      - in: path
+        name: inviteId
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: acceptInvite
+      responses:
+        "204":
+          description: Accepted
+
+  /invites/{inviteId}/decline:
+    parameters:
+      - in: path
+        name: inviteId
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: declineInvite
+      responses:
+        "204":
+          description: Declined
+
+  /invites/{inviteId}:
+    parameters:
+      - in: path
+        name: inviteId
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: removeInvite
+      description: Decline alias on request methods the clients use.
+      responses:
+        "204":
+          description: Declined
+
+  /attachments:
+    post:
+      tags: [attachments]
+      security: [{ bearerAuth: [] }]
+      operationId: createUploadSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUploadRequest"
+      responses:
+        "201":
+          description: Pending attachment + presigned upload URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSession"
+
+  /attachments/{attachmentId}:
+    parameters:
+      - $ref: "#/components/parameters/AttachmentId"
+    get:
+      tags: [attachments]
+      security: [{ bearerAuth: [] }]
+      operationId: getAttachment
+      responses:
+        "200":
+          description: Attachment with presigned download URL (read-authz, docs/UNIFIEDPUSH.md-adjacent)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attachment"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [attachments]
+      security: [{ bearerAuth: [] }]
+      operationId: deleteAttachment
+      responses:
+        "204":
+          description: Soft-deleted
+
+  /attachments/{attachmentId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/AttachmentId"
+    post:
+      tags: [attachments]
+      security: [{ bearerAuth: [] }]
+      operationId: completeUpload
+      responses:
+        "200":
+          description: Attachment verified ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attachment"
+        "400":
+          description: Object absent or size/sha mismatch
+
+  /rooms/{roomId}/messages:
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+    get:
+      tags: [messages]
+      security: [{ bearerAuth: [] }]
+      operationId: listMessages
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - in: query
+          name: before
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagePage"
+    post:
+      tags: [messages]
+      security: [{ bearerAuth: [] }]
+      operationId: createMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMessageRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+
+  /messages/{messageId}:
+    parameters:
+      - $ref: "#/components/parameters/MessageId"
+    get:
+      tags: [messages]
+      security: [{ bearerAuth: [] }]
+      operationId: getMessage
+      responses:
+        "200":
+          description: Message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [messages]
+      security: [{ bearerAuth: [] }]
+      operationId: updateMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMessageRequest"
+      responses:
+        "200":
+          description: Updated message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+    delete:
+      tags: [messages]
+      security: [{ bearerAuth: [] }]
+      operationId: deleteMessage
+      responses:
+        "200":
+          description: Deleted (tombstone returned)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+
+  /messages/{messageId}/reactions:
+    parameters:
+      - $ref: "#/components/parameters/MessageId"
+    get:
+      tags: [messages]
+      security: [{ bearerAuth: [] }]
+      operationId: listReactions
+      responses:
+        "200":
+          description: Aggregated reaction counts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Reaction"
+    post:
+      tags: [messages]
+      security: [{ bearerAuth: [] }]
+      operationId: react
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReactRequest"
+      responses:
+        "204":
+          description: Added
+
+  /messages/{messageId}/reactions/{emoji}:
+    parameters:
+      - $ref: "#/components/parameters/MessageId"
+      - in: path
+        name: emoji
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [messages]
+      security: [{ bearerAuth: [] }]
+      operationId: unreact
+      responses:
+        "204":
+          description: Removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /devices:
+    post:
+      tags: [devices]
+      security: [{ bearerAuth: [] }]
+      operationId: registerDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterDeviceRequest"
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterDeviceResponse"
+
+  /devices/{deviceId}/validate:
+    parameters:
+      - in: path
+        name: deviceId
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [devices]
+      security: [{ bearerAuth: [] }]
+      operationId: validateDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateDeviceRequest"
+      responses:
+        "204":
+          description: Validation ping round trip complete (docs/UNIFIEDPUSH.md §3.3)
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /devices/{deviceId}:
+    parameters:
+      - in: path
+        name: deviceId
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [devices]
+      security: [{ bearerAuth: [] }]
+      operationId: renewDevice
+      description: Replace the device's push registration (endpoint renewal).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushRegistration"
+      responses:
+        "204":
+          description: Renewed
+    delete:
+      tags: [devices]
+      security: [{ bearerAuth: [] }]
+      operationId: deleteDevice
+      responses:
+        "204":
+          description: Removed
+
+  /push/vapid:
+    get:
+      tags: [devices]
+      security: [{ bearerAuth: [] }]
+      operationId: getVapidPublicKey
+      description: RFC 8292 public key for connector registration (base64url, 87 bytes).
+      responses:
+        "200":
+          description: Public key
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [public_key]
+                properties:
+                  public_key:
+                    type: string
+
+  /ws:
+    get:
+      tags: [health]
+      operationId: wsEndpoint
+      description: |
+        WebSocket (docs/WEBSOCKETS.md) — same-origin upgrade, cookie or bearer
+        auth (ADR-015). Frames: subscribe/unsubscribe, typing.started/stopped,
+        ack, read; server events per the envelope list there. Not a REST
+        resource; listed for contract completeness.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    RoomId:
+      in: path
+      name: roomId
+      required: true
+      schema:
+        type: string
+    MessageId:
+      in: path
+      name: messageId
+      required: true
+      schema:
+        type: string
+    UserId:
+      in: path
+      name: userId
+      required: true
+      schema:
+        type: string
+    ContactId:
+      in: path
+      name: contactId
+      required: true
+      schema:
+        type: string
+    AttachmentId:
+      in: path
+      name: attachmentId
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Forbidden — not permitted for this acting user
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code.
+        message:
+          type: string
+          description: Human-readable message.
+
+    ChangePasswordRequest:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+          minLength: 8
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        token_request:
+          type: boolean
+          default: false
+          description: >
+            Non-browser clients (Android, integrations) set this to receive
+            the opaque session token in the response body for
+            `Authorization: Bearer` use; browser clients use the cookie only
+            (ADR-015).
+
+    AuthResponse:
+      description: >
+        Login response. Browsers: cookie set, `token` omitted. Clients that
+        sent `token_request: true` receive the opaque session token for
+        bearer use (ADR-015).
+      type: object
+      required: [user]
+      properties:
+        token:
+          type: string
+          description: >
+            The same opaque session token carried by the cookie; present only
+            when the request set token_request.
+        user:
+          $ref: "#/components/schemas/User"
+
+    User:
+      type: object
+      required: [id, username, display_name, role, avatar_url]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        display_name:
+          type: string
+        role:
+          type: string
+          enum: [user, moderator, admin]
+        email:
+          type: string
+          nullable: true
+          description: Present only on self payloads (GET/PATCH /users/me, login).
+        timezone:
+          type: string
+          nullable: true
+          description: IANA tz name for client-side rendering; UTC RFC 3339 on the wire.
+        avatar_url:
+          type: string
+          nullable: true
+          description: >
+            Resolved avatar URL (presigned attachment URL, or server-side
+            Gravatar fallback, or null for client-side monogram) — ADR-011.
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            Null unless the target user's lastSeen preference allows, ADR-013.
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+          nullable: true
+        avatar_attachment_id:
+          type: string
+          nullable: true
+          description: Set from an attachment created via the upload flow (ADR-011).
+
+    Preferences:
+      type: object
+      required: [last_seen_visible, read_receipts, allow_group_invites, allow_private_messages]
+      properties:
+        last_seen_visible:
+          type: boolean
+        read_receipts:
+          type: boolean
+        allow_group_invites:
+          type: boolean
+        allow_private_messages:
+          type: boolean
+
+    UpdatePreferencesRequest:
+      description: Partial update; omitted fields keep current values.
+      type: object
+      properties:
+        last_seen_visible:
+          type: boolean
+        read_receipts:
+          type: boolean
+        allow_group_invites:
+          type: boolean
+        allow_private_messages:
+          type: boolean
+      minProperties: 1
+
+    AddContactRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+
+    NotificationMode:
+      type: object
+      required: [room_id, mode]
+      properties:
+        room_id:
+          type: string
+          description: "Room id for overrides; \"\" for the user default row."
+        mode:
+          type: string
+          enum: [all, mentions, directs, never]
+
+    Reaction:
+      type: object
+      required: [emoji, count]
+      properties:
+        emoji:
+          type: string
+        count:
+          type: integer
+
+    ReactRequest:
+      type: object
+      required: [emoji]
+      properties:
+        emoji:
+          type: string
+          maxLength: 64
+
+    SetNotificationModeRequest:
+      type: object
+      required: [mode]
+      properties:
+        room_id:
+          type: string
+          nullable: true
+          description: Omitted/null sets the user default row; a room id sets that room's override.
+        mode:
+          type: string
+          enum: [all, mentions, directs, never]
+
+    Contact:
+      type: object
+      required: [id, user, created_at]
+      properties:
+        id:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+        created_at:
+          type: string
+          format: date-time
+
+    Room:
+      type: object
+      required: [id, type, avatar_url]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [public, private, direct, group_direct]
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        pinned_message_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        archived:
+          type: boolean
+          description: >
+            Caller's member-level conversation archive flag (sidebar filter).
+            False when the room is returned without membership context.
+        my_role:
+          type: string
+          enum: [member, admin]
+          description: Caller's role; present when the caller is a member.
+        unread_count:
+          type: integer
+          description: Unread (un-read receipts) for the caller; present on room lists.
+
+    CreateRoomRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [public, private, direct, group_direct]
+          description: >
+            public/private rooms get a name; direct takes exactly one
+            co-member in `members` (contact or allow_private_messages);
+            group_direct takes ≥1 co-members (creator becomes admin).
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+        members:
+          type: array
+          items:
+            type: string
+          description: Co-member user ids for direct/group_direct rooms.
+
+    UpdateRoomRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+        avatar_attachment_id:
+          type: string
+          nullable: true
+      minProperties: 1
+
+    PinRequest:
+      type: object
+      required: [message_id]
+      properties:
+        message_id:
+          type: string
+
+    MemberArchiveRequest:
+      type: object
+      required: [archived]
+      properties:
+        archived:
+          type: boolean
+
+    CreateMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+        format:
+          type: string
+          enum: [markdown]
+          default: markdown
+        reply_to_message_id:
+          type: string
+          nullable: true
+        attachment_ids:
+          type: array
+          items:
+            type: string
+
+    UpdateMessageRequest:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+        format:
+          type: string
+          enum: [markdown]
+          default: markdown
+
+    Message:
+      type: object
+      required: [id, room_id, author_id, body, format, created_at]
+      properties:
+        id:
+          type: string
+        room_id:
+          type: string
+        author_id:
+          type: string
+        author:
+          description: >
+            Hydrated author user payload; present when messages are returned
+            through room/message reads.
+          $ref: "#/components/schemas/User"
+        body:
+          type: string
+        format:
+          type: string
+        reply_to_message_id:
+          type: string
+          nullable: true
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Attachment"
+        receipts:
+          $ref: "#/components/schemas/Receipts"
+        created_at:
+          type: string
+          format: date-time
+        edited_at:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            Present but non-null only to tombstone deleted messages; deleted
+            bodies are not returned.
+
+    Receipts:
+      description: >
+        Per-message delivery/read state (ADR-009). Senders see state for their
+        own messages; recipients see their own receipts. Omitted when not
+        visible to the caller.
+      type: object
+      properties:
+        delivered_at:
+          type: string
+          format: date-time
+          nullable: true
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    MessagePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        next_cursor:
+          type: string
+          nullable: true
+
+    Attachment:
+      type: object
+      required: [id, filename, mime_type, size_bytes]
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        url:
+          type: string
+          nullable: true
+          description: Presigned download URL; may be null when unauthenticated or expired.
+        thumbnail_url:
+          type: string
+          nullable: true
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+
+    RegisterDeviceRequest:
+      type: object
+      required: [platform, client_name]
+      properties:
+        platform:
+          type: string
+          enum: [android, web]
+        client_name:
+          type: string
+        client_version:
+          type: string
+        push_registration:
+          $ref: "#/components/schemas/PushRegistration"
+
+    PushRegistration:
+      type: object
+      required: [endpoint, public_key, auth_secret]
+      additionalProperties: false
+      properties:
+        endpoint:
+          type: string
+          maxLength: 1000
+        public_key:
+          type: string
+        auth_secret:
+          type: string
+
+    RegisterDeviceResponse:
+      type: object
+      required: [device_id, validation_required]
+      properties:
+        device_id:
+          type: string
+        validation_required:
+          type: boolean
+          description: >
+            True when a push registration needs the validation ping round
+            trip (docs/UNIFIEDPUSH.md §3.3); the client answers via
+            /devices/{id}/validate.
+
+    ValidateDeviceRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: The decrypted validation ping token sent back by the app.
+
+    AddMemberRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+
+    CreateInviteRequest:
+      type: object
+      required: [room_id, user_id]
+      properties:
+        room_id:
+          type: string
+        user_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Invite:
+      type: object
+      required: [id, room, status, created_at]
+      properties:
+        id:
+          type: string
+        room:
+          $ref: "#/components/schemas/Room"
+        inviter:
+          $ref: "#/components/schemas/User"
+        invitee:
+          $ref: "#/components/schemas/User"
+        status:
+          type: string
+          enum: [pending, accepted, declined, revoked]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateUploadRequest:
+      type: object
+      required: [filename, mime_type, size_bytes]
+      properties:
+        filename:
+          type: string
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+          description: Optional client checksum, verified at complete.
+
+    UploadSession:
+      type: object
+      required: [attachment, upload_url]
+      properties:
+        attachment:
+          $ref: "#/components/schemas/Attachment"
+        upload_url:
+          type: string
+          description: Presigned PUT target; the client uploads directly.
