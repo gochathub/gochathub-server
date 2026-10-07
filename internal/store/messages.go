@@ -48,12 +48,15 @@ type ReceiptRow struct {
 }
 
 // SeedReceipts creates a receipts row for every listed member; the author's
-// row is stamped read at creation. Returns member ids for the WS fan-out.
+// row is stamped read at creation. delivered_at stays NULL for recipients —
+// only a WS ack frame or a read stamp makes it real (ponytail: receipt rows
+// exist for aggregation, delivered semantics come from actual delivery).
+// Returns member ids for the WS fan-out.
 func (s *Store) SeedReceipts(ctx context.Context, messageID, roomID, authorID string) ([]string, error) {
 	rows, err := s.Q.Query(ctx, `
 		WITH rec AS (
 			INSERT INTO message_receipts (message_id, user_id, delivered_at, read_at)
-			SELECT $1, m.user_id, now(),
+			SELECT $1, m.user_id, CAST(NULL AS timestamptz),
 				CASE WHEN m.user_id = $3 THEN now() ELSE NULL END
 			FROM room_members m WHERE m.room_id = $2
 			RETURNING user_id::text
@@ -96,6 +99,30 @@ func (s *Store) MarkRead(ctx context.Context, messageID, userID string) error {
 		}
 		return tx.SetReadCursor(ctx, roomID, userID, messageID)
 	})
+}
+
+// ReceiptsForPage is the batched caller-receipts lookup for a message page.
+func (s *Store) ReceiptsForPage(ctx context.Context, messageIDs []string, userID string) (map[string]ReceiptRow, error) {
+	out := map[string]ReceiptRow{}
+	if len(messageIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.Q.Query(ctx, `
+		SELECT message_id::text, user_id::text, delivered_at, read_at
+		FROM message_receipts WHERE message_id = ANY($1) AND user_id = $2`,
+		messageIDs, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r ReceiptRow
+		if err := rows.Scan(&r.MessageID, &r.UserID, &r.DeliveredAt, &r.ReadAt); err != nil {
+			return nil, err
+		}
+		out[r.MessageID] = r
+	}
+	return out, rows.Err()
 }
 
 // ReceiptsForUser returns the caller's receipts for a message, or absent.

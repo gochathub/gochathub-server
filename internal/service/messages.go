@@ -125,13 +125,9 @@ func (ms *MessageService) List(ctx context.Context, p Principal, roomID, before 
 	if err != nil {
 		return model.MessagePage{}, fmt.Errorf("list messages: %w", err)
 	}
-	out := make([]model.Message, 0, len(rows))
-	for _, r := range rows {
-		m, err := ms.hydrate(ctx, r, p.UserID)
-		if err != nil {
-			return model.MessagePage{}, err
-		}
-		out = append(out, m)
+	out, err := ms.hydrateAll(ctx, rows, p.UserID)
+	if err != nil {
+		return model.MessagePage{}, err
 	}
 	page := model.MessagePage{Items: out}
 	if len(rows) == limit {
@@ -141,23 +137,93 @@ func (ms *MessageService) List(ctx context.Context, p Principal, roomID, before 
 	return page, nil
 }
 
+// hydrateAll renders a message page with one query per table instead of
+// per-message roundtrips. Receipt aggregates for the caller's own messages
+// stay per-row (rare in a page, ponytail: batch when pages are self-authored).
+func (ms *MessageService) hydrateAll(ctx context.Context, rows []store.MessageRow, callerID string) ([]model.Message, error) {
+	out := make([]model.Message, 0, len(rows))
+	if len(rows) == 0 {
+		return out, nil
+	}
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	authors := map[string]store.UserRow{}
+	authorIDs := []string{}
+	seen := map[string]struct{}{}
+	for _, r := range rows {
+		if _, dup := seen[r.AuthorID]; dup {
+			continue
+		}
+		seen[r.AuthorID] = struct{}{}
+		authorIDs = append(authorIDs, r.AuthorID)
+	}
+	authorRows, err := ms.App.Store.UsersByIDs(ctx, authorIDs)
+	if err != nil {
+		return nil, fmt.Errorf("authors: %w", err)
+	}
+	for _, a := range authorRows {
+		authors[a.ID] = a
+	}
+	atts, err := ms.App.Store.AttachmentsForMessages(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("attachments: %w", err)
+	}
+	attsBy := map[string][]store.MessageAttachmentRow{}
+	for _, a := range atts {
+		attsBy[a.MessageID] = append(attsBy[a.MessageID], a)
+	}
+	rcts, err := ms.App.Store.ReactionCountsFor(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("reactions: %w", err)
+	}
+	rctsBy := map[string][]store.ReactionCount{}
+	for _, rc := range rcts {
+		rctsBy[rc.MessageID] = append(rctsBy[rc.MessageID], rc)
+	}
+	recs, err := ms.App.Store.ReceiptsForPage(ctx, ids, callerID)
+	if err != nil {
+		return nil, fmt.Errorf("receipts: %w", err)
+	}
+	rendered := map[string]model.User{}
+	for _, r := range rows {
+		pd, cached := rendered[r.AuthorID]
+		if !cached {
+			author, ok := authors[r.AuthorID]
+			if !ok {
+				author, err = ms.App.Store.UserByID(ctx, r.AuthorID)
+				if err != nil {
+					return nil, fmt.Errorf("author lookup: %w", err)
+				}
+			}
+			if pd, err = ms.App.Users.PublicUser(ctx, author); err != nil {
+				return nil, err
+			}
+			rendered[r.AuthorID] = pd
+		}
+		var rec *model.Receipts
+		if r.AuthorID == callerID {
+			delivered, read, aggErr := ms.App.Store.ReceiptAggregate(ctx, r.ID)
+			if aggErr == nil && (delivered != nil || read != nil) {
+				rec = &model.Receipts{DeliveredAt: delivered, ReadAt: read}
+			}
+		} else if row, ok := recs[r.ID]; ok {
+			rec = &model.Receipts{DeliveredAt: row.DeliveredAt, ReadAt: row.ReadAt}
+		}
+		msg, herr := ms.assemble(ctx, r, pd, attsBy[r.ID], rctsBy[r.ID], rec)
+		if herr != nil {
+			return nil, herr
+		}
+		out = append(out, msg)
+	}
+	return out, nil
+}
+
 // hydrate assembles the model.Message: author, receipts (caller's, gated),
-// attachments URLs, reactions, mentions.
+// attachments URLs, reactions, mentions. Single-row paths (create/get);
+// List uses hydrateAll.
 func (ms *MessageService) hydrate(ctx context.Context, row store.MessageRow, callerID string) (model.Message, error) {
-	msg := model.Message{
-		ID:               row.ID,
-		RoomID:           row.RoomID,
-		AuthorID:         row.AuthorID,
-		Body:             row.Body,
-		Format:           row.Format,
-		ReplyToMessageID: row.ReplyToMessageID,
-		CreatedAt:        row.CreatedAt,
-		EditedAt:         row.EditedAt,
-		DeletedAt:        row.DeletedAt,
-	}
-	if row.DeletedAt != nil {
-		msg.Body = "" // tombstone: no content
-	}
 	author, err := ms.App.Store.UserByID(ctx, row.AuthorID)
 	if err != nil {
 		return model.Message{}, fmt.Errorf("author lookup: %w", err)
@@ -166,24 +232,49 @@ func (ms *MessageService) hydrate(ctx context.Context, row store.MessageRow, cal
 	if err != nil {
 		return model.Message{}, err
 	}
-	msg.Author = &pd
+	atts, err := ms.App.Store.AttachmentsForMessages(ctx, []string{row.ID})
+	if err != nil {
+		return model.Message{}, fmt.Errorf("attachments: %w", err)
+	}
+	rcts, err := ms.App.Store.ReactionCountsFor(ctx, []string{row.ID})
+	if err != nil {
+		return model.Message{}, fmt.Errorf("reactions: %w", err)
+	}
+	var receipts *model.Receipts
 	// receipts visible per ADR-009 rule: senders see aggregate state for
 	// their own messages; recipients see their own receipt only.
 	if row.AuthorID == callerID {
 		delivered, read, aggErr := ms.App.Store.ReceiptAggregate(ctx, row.ID)
 		if aggErr == nil && (delivered != nil || read != nil) {
-			msg.Receipts = &model.Receipts{DeliveredAt: delivered, ReadAt: read}
+			receipts = &model.Receipts{DeliveredAt: delivered, ReadAt: read}
 		}
 	} else {
 		rec, recErr := ms.App.Store.ReceiptForUser(ctx, row.ID, callerID)
 		if recErr == nil {
-			msg.Receipts = &model.Receipts{DeliveredAt: rec.DeliveredAt, ReadAt: rec.ReadAt}
+			receipts = &model.Receipts{DeliveredAt: rec.DeliveredAt, ReadAt: rec.ReadAt}
 		}
 	}
-	atts, err := ms.App.Store.AttachmentsForMessages(ctx, []string{row.ID})
-	if err != nil {
-		return model.Message{}, fmt.Errorf("attachments: %w", err)
+	return ms.assemble(ctx, row, pd, atts, rcts, receipts)
+}
+
+// assemble builds the Message struct from a row plus pre-fetched data.
+func (ms *MessageService) assemble(ctx context.Context, row store.MessageRow, author model.User, atts []store.MessageAttachmentRow, rcts []store.ReactionCount, receipts *model.Receipts) (model.Message, error) {
+	msg := model.Message{
+		ID:               row.ID,
+		RoomID:           row.RoomID,
+		AuthorID:         row.AuthorID,
+		Body:             row.Body,
+		Format:           row.Format,
+		ReplyToMessageID: row.ReplyToMessageID,
+		Receipts:         receipts,
+		CreatedAt:        row.CreatedAt,
+		EditedAt:         row.EditedAt,
+		DeletedAt:        row.DeletedAt,
 	}
+	if row.DeletedAt != nil {
+		msg.Body = "" // tombstone: no content
+	}
+	msg.Author = &author
 	if len(atts) > 0 {
 		msg.Attachments = make([]model.Attachment, 0, len(atts))
 		for _, a := range atts {
@@ -197,10 +288,6 @@ func (ms *MessageService) hydrate(ctx context.Context, row store.MessageRow, cal
 			}
 			msg.Attachments = append(msg.Attachments, attachmentToModel(a.AttachmentRow, url))
 		}
-	}
-	rcts, err := ms.App.Store.ReactionCountsFor(ctx, []string{row.ID})
-	if err != nil {
-		return model.Message{}, fmt.Errorf("reactions: %w", err)
 	}
 	if len(rcts) > 0 {
 		msg.Reactions = make([]model.Reaction, 0, len(rcts))

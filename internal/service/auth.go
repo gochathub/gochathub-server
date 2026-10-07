@@ -99,7 +99,7 @@ func (a *AuthService) ResolveBearer(ctx context.Context, rawToken string) (Princ
 	case err != nil:
 		return Principal{}, fmt.Errorf("session lookup: %w", err)
 	default:
-		_ = a.App.Store.TouchSession(ctx, sess.ID)
+		a.touch(ctx, sess.LastSeenAt, func() { _ = a.App.Store.TouchSession(ctx, sess.ID) }, user)
 		return Principal{
 			UserID:    user.ID,
 			Username:  user.Username,
@@ -115,8 +115,11 @@ func (a *AuthService) ResolveBearer(ctx context.Context, rawToken string) (Princ
 	if err != nil {
 		return Principal{}, fmt.Errorf("token lookup: %w", err)
 	}
-	// fire-and-forget liveness
-	_ = a.App.Store.TouchAPIToken(ctx, tok.ID)
+	var lastUsed time.Time
+	if tok.LastUsedAt != nil {
+		lastUsed = *tok.LastUsedAt
+	}
+	a.touch(ctx, lastUsed, func() { _ = a.App.Store.TouchAPIToken(ctx, tok.ID) }, user)
 	return Principal{UserID: user.ID, Username: user.Username, Role: user.Role, Kind: "api_token", TokenID: tok.ID}, nil
 }
 
@@ -129,8 +132,26 @@ func (a *AuthService) ResolveSession(ctx context.Context, rawToken string) (Prin
 	if err != nil {
 		return Principal{}, fmt.Errorf("session lookup: %w", err)
 	}
-	_ = a.App.Store.TouchSession(ctx, sess.ID)
+	a.touch(ctx, sess.LastSeenAt, func() { _ = a.App.Store.TouchSession(ctx, sess.ID) }, user)
 	return Principal{UserID: user.ID, Username: user.Username, Role: user.Role, Kind: "session", SessionID: sess.ID}, nil
+}
+
+// lastSeenInterval throttles the advisory liveness writes: one UPDATE per
+// (user, session, token) per minute of activity, not one per request.
+const lastSeenInterval = time.Minute
+
+// touch writes when stale: now - last stamp exceeds the interval (zero last
+// stamp = never written). The middleware's per-request touches went with it.
+func (a *AuthService) touch(ctx context.Context, last time.Time, write func(), user store.UserRow) {
+	now := time.Now()
+	stale := now.Sub(last) > lastSeenInterval
+	userStale := user.LastSeenAt == nil || now.Sub(*user.LastSeenAt) > lastSeenInterval
+	if stale {
+		write()
+	}
+	if userStale && user.ID != "" {
+		_ = a.App.Store.TouchLastSeen(ctx, user.ID)
+	}
 }
 
 // Logout revokes the caller's session.

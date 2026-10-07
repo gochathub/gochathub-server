@@ -680,6 +680,12 @@ func TestReceiptsPreferenceGating(t *testing.T) {
 	msg := alice.do("POST", "/api/v1/rooms/"+roomID+"/messages", map[string]any{"body": "hello"}, 201)
 	msgID := alice.str(msg, "id")
 
+	// delivered is not pre-stamped at seed time; only acks/read make it real
+	bobView := bob.do("GET", "/api/v1/messages/"+msgID, nil, 200)
+	if br, ok := bobView["receipts"].(map[string]any); ok && br["delivered_at"] != nil {
+		t.Fatalf("delivered must not be pre-stamped: %v", br)
+	}
+
 	// bob hides read receipts, then reads
 	bob.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"read_receipts": false}, 200)
 	bob.do("POST", "/api/v1/rooms/"+roomID+"/read", map[string]any{"message_id": msgID}, 204)

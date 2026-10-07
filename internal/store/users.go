@@ -47,6 +47,27 @@ func (s *Store) InsertUser(ctx context.Context, u *UserRow) error {
 	return err
 }
 
+// UsersByIDs is the batched author lookup for message pages.
+func (s *Store) UsersByIDs(ctx context.Context, ids []string) ([]UserRow, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := s.Q.Query(ctx, `SELECT `+userCols+` FROM users u WHERE u.id::text = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserRow
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) UserByID(ctx context.Context, id string) (UserRow, error) {
 	return scanUser(s.Q.QueryRow(ctx, `SELECT `+userCols+` FROM users u WHERE u.id = $1`, id))
 }

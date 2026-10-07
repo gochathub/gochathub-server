@@ -163,7 +163,7 @@ func (a *API) withAuth(next http.Handler) http.Handler {
 				writeError(w, 401, "unauthorized", "invalid token")
 				return
 			}
-			_ = a.svc.Store.TouchLastSeen(r.Context(), p.UserID)
+			// liveness writes happen inside ResolveBearer, throttled
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxPrincipal, p)))
 			return
 		}
@@ -174,8 +174,7 @@ func (a *API) withAuth(next http.Handler) http.Handler {
 				writeError(w, 401, "unauthorized", "invalid session")
 				return
 			}
-			// last_seen tracking on authenticated activity
-			_ = a.svc.Store.TouchLastSeen(r.Context(), p.UserID)
+			// liveness writes happen inside ResolveSession, throttled
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxPrincipal, p)))
 			return
 		}
