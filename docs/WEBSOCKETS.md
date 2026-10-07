@@ -44,6 +44,7 @@ room.updated
 room.archived
 room.member_added
 room.member_removed
+room.member_role_changed
 
 message.created
 message.updated

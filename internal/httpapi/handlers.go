@@ -310,6 +310,22 @@ func (a *API) handleAddMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+func (a *API) handleSetMemberRole(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in struct {
+		Role string `json:"role"`
+	}
+	if err := decodeJSON(r, &in); err != nil || in.Role == "" {
+		writeError(w, 400, "validation", "role required")
+		return
+	}
+	if err := a.svc.Rooms.SetMemberRole(r.Context(), p, r.PathValue("roomId"), r.PathValue("userId"), in.Role); err != nil {
+		a.mapError(w, err)
+		return
+	}
+	w.WriteHeader(204)
+}
+
 func (a *API) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	p, _ := principalFrom(r.Context())
 	if err := a.svc.Rooms.RemoveMember(r.Context(), p, r.PathValue("roomId"), r.PathValue("userId")); err != nil {

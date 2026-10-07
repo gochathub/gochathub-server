@@ -229,6 +229,28 @@ func (s *Store) AddMember(ctx context.Context, roomID, userID, role string) erro
 	return err
 }
 
+// SetMemberRole changes an existing member's room role (ErrNotFound if not a member).
+func (s *Store) SetMemberRole(ctx context.Context, roomID, userID, role string) error {
+	tag, err := s.Q.Exec(ctx,
+		`UPDATE room_members SET role = $3 WHERE room_id = $1 AND user_id = $2`,
+		roomID, userID, role)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) AdminCount(ctx context.Context, roomID string) (int, error) {
+	var n int
+	err := s.Q.QueryRow(ctx,
+		`SELECT count(*) FROM room_members WHERE room_id = $1 AND role = 'admin'`,
+		roomID).Scan(&n)
+	return n, err
+}
+
 func (s *Store) RemoveMember(ctx context.Context, roomID, userID string) error {
 	_, err := s.Q.Exec(ctx, `DELETE FROM room_members WHERE room_id = $1 AND user_id = $2`, roomID, userID)
 	return err

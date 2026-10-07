@@ -781,6 +781,41 @@ func TestRoomsSelfLeave(t *testing.T) {
 	alice.do("DELETE", "/api/v1/rooms/"+roomID, nil, 204)
 }
 
+// TestMemberRoles: members list carries room_role; only admins change roles;
+// the last admin cannot be demoted.
+func TestMemberRoles(t *testing.T) {
+	url := testURL(t)
+	ts, svc := newServer(t, url, nil)
+	seedUsers(t, svc, "mralice", "mrbob")
+	base := &client{t: t, b: ts.URL}
+	alice := base.forUser(svc, "mralice")
+	bob := base.forUser(svc, "mrbob")
+
+	aliceID := alice.str(alice.do("GET", "/api/v1/users/me", nil, 200), "id")
+	bobID := bob.str(bob.do("GET", "/api/v1/users/me", nil, 200), "id")
+	room := alice.do("POST", "/api/v1/rooms", map[string]any{"type": "group_direct", "name": "team", "members": []string{bobID}}, 201)
+	roomID := alice.str(room, "id")
+	path := func(id string) string { return "/api/v1/rooms/" + roomID + "/members/" + id }
+
+	roles := map[string]string{}
+	for _, it := range alice.doArr("GET", "/api/v1/rooms/"+roomID+"/members", nil, 200) {
+		m := it.(map[string]any)
+		roles[m["id"].(string)] = m["room_role"].(string)
+	}
+	if roles[aliceID] != "admin" || roles[bobID] != "member" {
+		t.Fatalf("room_role = %v", roles)
+	}
+
+	bob.do("PATCH", path(bobID), map[string]any{"role": "admin"}, 403)      // member cannot self-promote
+	alice.do("PATCH", path(aliceID), map[string]any{"role": "member"}, 409) // last admin
+	alice.do("PATCH", path(bobID), map[string]any{"role": "bogus"}, 400)
+
+	alice.do("PATCH", path(bobID), map[string]any{"role": "admin"}, 204)
+	alice.do("PATCH", path(aliceID), map[string]any{"role": "member"}, 204) // no longer the last admin
+	alice.do("PATCH", path(bobID), map[string]any{"role": "member"}, 403)   // alice is a plain member now
+	bob.do("PATCH", path(bobID), map[string]any{"role": "member"}, 409)     // bob is the last admin
+}
+
 // roomIDs is the set of ids in a GET /rooms response.
 func roomIDs(list []any) map[string]bool {
 	out := map[string]bool{}

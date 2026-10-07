@@ -415,7 +415,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/User"
+                  $ref: "#/components/schemas/RoomMember"
     post:
       tags: [rooms]
       security: [{ bearerAuth: [] }]
@@ -440,6 +440,27 @@ paths:
         required: true
         schema:
           type: string
+    patch:
+      tags: [rooms]
+      security: [{ bearerAuth: [] }]
+      operationId: setRoomMemberRole
+      description: >
+        Promote or demote a member (room admins and server admins). The last
+        admin of a room cannot be demoted (409 conflict). Emits
+        room.member_role_changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetMemberRoleRequest"
+      responses:
+        "204":
+          description: Updated
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Would leave the room without an admin
     delete:
       tags: [rooms]
       security: [{ bearerAuth: [] }]
@@ -1389,6 +1410,25 @@ components:
         token:
           type: string
           description: The decrypted validation ping token sent back by the app.
+
+    RoomMember:
+      description: A member's public profile plus their role in this room.
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          required: [room_role]
+          properties:
+            room_role:
+              type: string
+              enum: [admin, member]
+
+    SetMemberRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, member]
 
     AddMemberRequest:
       type: object

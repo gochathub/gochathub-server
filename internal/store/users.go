@@ -80,7 +80,7 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (UserRow, e
 func (s *Store) SearchUsers(ctx context.Context, q string, limit int) ([]UserRow, error) {
 	rows, err := s.Q.Query(ctx, `
 		SELECT `+userCols+` FROM users u
-		WHERE u.enabled AND (u.username LIKE $1 ESCAPE '\' OR u.display_name LIKE $1 ESCAPE '\')
+		WHERE u.enabled AND (u.username ILIKE $1 ESCAPE '\' OR u.display_name ILIKE $1 ESCAPE '\')
 		ORDER BY u.username LIMIT $2`,
 		"%"+escapeLike(q)+"%", limit)
 	if err != nil {

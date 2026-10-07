@@ -366,7 +366,53 @@ func (rs *RoomService) CheckSubscribable(ctx context.Context, p Principal, roomI
 	return nil
 }
 
-func (rs *RoomService) Members(ctx context.Context, p Principal, roomID string) ([]model.User, error) {
+// RoomMember is a member's public profile plus their role in this room.
+type RoomMember struct {
+	model.User
+	RoomRole string `json:"room_role"`
+}
+
+// SetMemberRole promotes/demotes a member (room admin or server admin).
+// The last admin of a room cannot be demoted.
+// ponytail: count-then-update is racy under two concurrent demotes; lock the room row if that ever matters.
+func (rs *RoomService) SetMemberRole(ctx context.Context, p Principal, roomID, userID, role string) error {
+	if role != "admin" && role != "member" {
+		return bad("role must be admin or member")
+	}
+	_, callerRole, err := rs.App.Store.RoomForUser(ctx, roomID, p.UserID)
+	if err != nil {
+		return ErrNotFound
+	}
+	if callerRole != "admin" && !p.IsAdmin() {
+		return ErrForbidden
+	}
+	current, err := rs.App.Store.MemberRole(ctx, roomID, userID)
+	if err != nil {
+		return ErrNotFound
+	}
+	if current == role {
+		return nil
+	}
+	if role == "member" {
+		n, err := rs.App.Store.AdminCount(ctx, roomID)
+		if err != nil {
+			return fmt.Errorf("admin count: %w", err)
+		}
+		if n <= 1 {
+			return ErrConflict
+		}
+	}
+	if err := rs.App.Store.SetMemberRole(ctx, roomID, userID, role); err != nil {
+		return fmt.Errorf("set member role: %w", err)
+	}
+	rs.App.Notify.ToRoom(roomID, NewEnvelope(ctx, "room.member_role_changed", roomID, map[string]any{
+		"user_id": userID,
+		"role":    role,
+	}))
+	return rs.App.Store.Audit(ctx, p.UserID, "room.member_role", "room", roomID, []byte(`{}`), nil)
+}
+
+func (rs *RoomService) Members(ctx context.Context, p Principal, roomID string) ([]RoomMember, error) {
 	if _, _, err := rs.App.Store.RoomForUser(ctx, roomID, p.UserID); err != nil {
 		return nil, ErrNotFound
 	}
@@ -374,7 +420,7 @@ func (rs *RoomService) Members(ctx context.Context, p Principal, roomID string) 
 	if err != nil {
 		return nil, fmt.Errorf("members: %w", err)
 	}
-	out := make([]model.User, 0, len(rows))
+	out := make([]RoomMember, 0, len(rows))
 	for _, m := range rows {
 		prof := store.UserRow{
 			ID: m.UserID, Username: m.Username, DisplayName: m.DisplayName,
@@ -384,7 +430,7 @@ func (rs *RoomService) Members(ctx context.Context, p Principal, roomID string) 
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, u)
+		out = append(out, RoomMember{User: u, RoomRole: m.Role})
 	}
 	return out, nil
 }

@@ -98,6 +98,7 @@ func (a *API) routes() {
 	mux.Handle("DELETE /api/v1/rooms/{roomId}", a.chain(true, http.HandlerFunc(a.handleArchiveRoom)))
 	mux.Handle("GET /api/v1/rooms/{roomId}/members", a.chain(true, http.HandlerFunc(a.handleRoomMembers)))
 	mux.Handle("POST /api/v1/rooms/{roomId}/members", a.chain(true, http.HandlerFunc(a.handleAddMember)))
+	mux.Handle("PATCH /api/v1/rooms/{roomId}/members/{userId}", a.chain(true, http.HandlerFunc(a.handleSetMemberRole)))
 	mux.Handle("DELETE /api/v1/rooms/{roomId}/members/{userId}", a.chain(true, http.HandlerFunc(a.handleRemoveMember)))
 	mux.Handle("PUT /api/v1/rooms/{roomId}/pin", a.chain(true, http.HandlerFunc(a.handlePin)))
 	mux.Handle("DELETE /api/v1/rooms/{roomId}/pin", a.chain(true, http.HandlerFunc(a.handleUnpin)))
