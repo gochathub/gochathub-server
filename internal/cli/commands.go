@@ -16,6 +16,7 @@ import (
 
 	"github.com/gochathub/gochathub-server/internal/app"
 	"github.com/gochathub/gochathub-server/internal/httpapi"
+	"github.com/gochathub/gochathub-server/internal/migrate"
 	"github.com/gochathub/gochathub-server/internal/model"
 	"github.com/gochathub/gochathub-server/internal/service"
 	"github.com/gochathub/gochathub-server/internal/storage"
@@ -272,6 +273,47 @@ func userDelete() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "required confirmation")
+	return cmd
+}
+
+// --- rocket.chat import ---
+
+// rcmigrateCmd imports a Rocket.Chat mongodump archive (internal/migrate).
+func rcmigrateCmd() *cobra.Command {
+	var archivePath string
+	var dryRun, skipFiles bool
+	cmd := &cobra.Command{
+		Use:          "rcmigrate --archive <backup.archive>",
+		Short:        "Import a Rocket.Chat mongodump archive (repeatable; delta for re-runs)",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if archivePath == "" {
+				return fmt.Errorf("--archive required")
+			}
+			b, closeFn, err := bootstrap()
+			if err != nil {
+				return err
+			}
+			defer closeFn()
+			var stg *storage.S3
+			if b.cfg.S3Endpoint != "" {
+				stg, err = storage.NewS3(cmd.Context(), b.cfg.S3Endpoint, b.cfg.S3Region, b.cfg.S3Bucket, b.cfg.S3AccessKey, b.cfg.S3SecretKey, b.cfg.S3UseTLS)
+				if err != nil {
+					return fmt.Errorf("s3: %w", err)
+				}
+			}
+			sum, err := migrate.RcMigrate(cmd.Context(), b.q, stg, migrate.RcOpts{
+				Archive: archivePath, DryRun: dryRun, SkipFiles: skipFiles, Log: b.log,
+			})
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(sum)
+		},
+	}
+	cmd.Flags().StringVar(&archivePath, "archive", "", "mongodump --archive file (raw BSON)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "map and report without writing")
+	cmd.Flags().BoolVar(&skipFiles, "skip-files", false, "skip attachment/avatar upload to S3")
 	return cmd
 }
 

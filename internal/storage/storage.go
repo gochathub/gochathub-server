@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -55,6 +56,16 @@ func (s *S3) PresignPut(_ context.Context, key, mimeType string, size int64) (st
 	// content-type rides the presign via query when required; minio handles headers at upload time
 	_ = opts
 	return u.String(), nil
+}
+
+// PutObject writes content server-side (migration import path; the normal
+// upload flow is presigned).
+func (s *S3) PutObject(ctx context.Context, key, mimeType string, size int64, r io.Reader) error {
+	_, err := s.client.PutObject(ctx, s.bucket, key, r, size, minio.PutObjectOptions{ContentType: mimeType})
+	if err != nil {
+		return fmt.Errorf("put %s: %w", key, err)
+	}
+	return nil
 }
 
 func (s *S3) PresignGet(_ context.Context, key string) (string, error) {

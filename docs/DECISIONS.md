@@ -116,3 +116,15 @@ Known trade-off: the email hash is exposed to any client that receives the paylo
 When the target user's `last_seen_visible` preference disallows it, `last_seen_at` is serialized as JSON `null` rather than omitted.
 
 Reason: `User` keeps a stable schema for generated clients (`last_seen_at` is a declared nullable field); omitting the field would make every client implementation handle absent-vs-null branching for no benefit.
+
+## ADR-019: Rocket.Chat import — deterministic ids, sidecar schema, legacy bcrypt
+
+`rcmigrate` imports a Rocket.Chat mongodump archive (`internal/migrate`, one-shot/delta). Choices:
+
+- Deterministic UUIDv5 ids derived from source ids (fixed namespaces per kind) — re-runs upsert instead of duplicating; needed for repeatable cutover with fresh backups. No id-map table.
+- Delta cursor in `app_config` (`migrate.rc`): message/avatar timestamps; only advances on runs that imported attachments (`--skip-files` sets `files_pending`).
+- Legacy password hashes import as `bcrypt$` (bcrypt over SHA-256 hex, the Rocket.Chat/Meteor scheme); `pwd.Verify` accepts them and login re-hashes to argon2id. No plaintext is ever carried.
+- 2FA enrollment (TOTP `secret`/`hashedBackup`, `email2fa`) is stored in a dedicated `migrate_rc_users` sidecar table — the 2FA feature does not exist yet, so no speculative schema; the future feature consumes this table at rollout. Resume tokens, cloud credentials and password history are not carried over.
+- Archive parsing uses mongo-driver BSON decoding directly against the mongodump stream; no MongoDB instance is required at import time.
+
+Reason: correctness of idempotent re-runs beats inventing a migration-tracking schema; keeping untouched auth material in a sidecar avoids both loss (2FA must re-enroll otherwise) and schema speculation. The sidecar rows are removed with the user (CASCADE) and the table can be dropped once 2FA consumes the data.

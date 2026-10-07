@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gochathub/gochathub-server/internal/id"
@@ -51,6 +52,15 @@ func (a *AuthService) Login(ctx context.Context, username, password, userAgent s
 	if err != nil || !ok {
 		a.auditLogin(ctx, row.ID, ip, false)
 		return "", store.UserRow{}, ErrUnauthorized
+	}
+	// Migrated legacy hash (bcrypt$): upgrade to argon2id transparently.
+	if strings.HasPrefix(row.PasswordHash, pwd.BCryptPrefix) {
+		h, herr := pwd.Hash(password)
+		if herr == nil {
+			if uerr := a.App.Store.UpdateUserPassword(ctx, row.ID, h); uerr != nil {
+				a.App.Log.ErrorContext(ctx, "re-hash legacy password", "user", row.ID, "err", uerr)
+			}
+		}
 	}
 	return a.issueSession(ctx, row, userAgent, ip)
 }

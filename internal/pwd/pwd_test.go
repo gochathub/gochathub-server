@@ -1,6 +1,38 @@
 package pwd
 
-import "testing"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"testing"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+// rocketHash builds a migrated Rocket.Chat hash: bcrypt over the hex SHA-256
+// digest string (Meteor accounts-password scheme).
+func rocketHash(t *testing.T, password string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(password))
+	h, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(sum[:])), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	return BCryptPrefix + string(h)
+}
+
+func TestVerifyLegacyBcrypt(t *testing.T) {
+	stored := rocketHash(t, "hunter2")
+	if want := "bcrypt$"; len(stored) < len(want) || stored[:len(want)] != want {
+		t.Fatalf("missing prefix: %s", stored)
+	}
+	ok, err := Verify(stored, "hunter2")
+	if err != nil || !ok {
+		t.Fatalf("legacy bcrypt verify failed: ok=%v err=%v", ok, err)
+	}
+	if ok, err := Verify(stored, "wrong"); err != nil || ok {
+		t.Fatalf("wrong password accepted: ok=%v err=%v", ok, err)
+	}
+}
 
 func TestHashVerifyRoundtrip(t *testing.T) {
 	h, err := Hash("correct horse battery staple")

@@ -3,14 +3,17 @@ package pwd
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -20,6 +23,11 @@ const (
 	keyLen    = 32
 	version   = 1
 )
+
+// BCryptPrefix marks a Rocket.Chat/Meteor legacy hash copied verbatim by the
+// migration: bcrypt over the SHA-256 *hex digest string* of the password.
+// Verified once, then transparently re-hashed to argon2id on login.
+const BCryptPrefix = "bcrypt$"
 
 // Hash returns a PHC-style argon2id string:
 // argon2id$<version>,<memoryKiB>,<threads>,<keyLen>$<salt>$<key>
@@ -36,8 +44,14 @@ func Hash(password string) (string, error) {
 
 // Verify reports whether the password matches the stored hash. Crafted hashes
 // with absurd work factors are rejected so a hostile database cannot turn
-// login into a CPU DoS.
+// login into a CPU DoS. Legacy bcrypt$ hashes (migration import) verify
+// against bcrypt(SHA-256(pw) as hex).
 func Verify(stored, password string) (bool, error) {
+	if rest, ok := strings.CutPrefix(stored, BCryptPrefix); ok {
+		sum := sha256.Sum256([]byte(password))
+		err := bcrypt.CompareHashAndPassword([]byte(rest), []byte(hex.EncodeToString(sum[:])))
+		return err == nil, nil // ponytail: bcrypt mismatch error adds nothing here; caller checks ok only
+	}
 	rest, ok := strings.CutPrefix(stored, "argon2id$")
 	if !ok {
 		return false, errors.New("malformed password hash")
