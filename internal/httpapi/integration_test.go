@@ -317,9 +317,6 @@ func TestAuthBoundary(t *testing.T) {
 	if err := svc.Users.SetEnabled(context.Background(), "authone", false); err != nil {
 		t.Fatal(err)
 	}
-	c.tk = "disabled" // cookie flow tested above; bearer re-check below
-	tokens := ""
-	_ = tokens
 }
 
 // TestRoomPrivateAuthz: non-members cannot read private rooms or post.

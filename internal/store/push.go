@@ -75,17 +75,6 @@ func (s *Store) ValidatePushEndpoint(ctx context.Context, endpointID string) err
 	return err
 }
 
-func (s *Store) PushEndpointForDevice(ctx context.Context, endpointID, userID, deviceID string) (PushEndpointRow, error) {
-	const q = `SELECT id::text, device_id::text, user_id::text, endpoint, public_key, auth_secret,
-		validation_token_hash, validated_at, created_at, last_seen_at, revoked_at
-		FROM push_endpoints WHERE id = $1 AND user_id = $2 AND device_id = $3 AND revoked_at IS NULL`
-	var e PushEndpointRow
-	err := s.Q.QueryRow(ctx, q, endpointID, userID, deviceID).Scan(
-		&e.ID, &e.DeviceID, &e.UserID, &e.Endpoint, &e.PublicKey, &e.AuthSecret,
-		&e.ValidateHash, &e.ValidatedAt, &e.CreatedAt, &e.LastSeenAt, &e.RevokedAt)
-	return e, err
-}
-
 func (s *Store) ValidatedEndpointsForUsers(ctx context.Context, userIDs []string) ([]PushEndpointRow, error) {
 	if len(userIDs) == 0 {
 		return nil, nil
@@ -120,14 +109,6 @@ func (s *Store) ReplacePushEndpoint(ctx context.Context, oldID string, e *PushEn
 		}
 		return tx.CreatePushEndpoint(ctx, e)
 	})
-}
-
-func (s *Store) RevokePushEndpoint(ctx context.Context, endpointID, userID, deviceID string) error {
-	_, err := s.Q.Exec(ctx, `
-		UPDATE push_endpoints SET revoked_at = now()
-		WHERE id = $1 AND user_id = $2 AND device_id = $3 AND revoked_at IS NULL`,
-		endpointID, userID, deviceID)
-	return err
 }
 
 // RevokePushEndpointByID revokes without device checks (dead-endpoint cleanup).

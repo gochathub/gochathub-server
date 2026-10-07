@@ -38,19 +38,23 @@ func (s *Store) CreateInvite(ctx context.Context, i *InviteRow) error {
 	// notification) must address the live invite, not the discarded new id
 }
 
+// inviteQuery selects the display-joined invite shape; WHERE/ORDER clauses
+// are appended per lookup (same sync discipline as userCols).
+const inviteQuery = `SELECT i.id, i.room_id, r.name, r.type::text,
+	i.inviter_id, inv.display_name,
+	i.invitee_id, e.display_name,
+	i.status::text, i.expires_at, i.created_at, i.accepted_at
+FROM room_invites i
+JOIN rooms r ON r.id = i.room_id
+JOIN users inv ON inv.id = i.inviter_id
+JOIN users e ON e.id = i.invitee_id
+`
+
 // InviteForUser returns the invite only when the given user is invitee or
 // inviter — non-participants get ErrNotFound.
 func (s *Store) InviteForUser(ctx context.Context, inviteID, userID string) (InviteRow, error) {
-	return scanInvite(s.Q.QueryRow(ctx, `
-		SELECT i.id, i.room_id, r.name, r.type::text,
-			i.inviter_id, inv.display_name,
-			i.invitee_id, e.display_name,
-			i.status::text, i.expires_at, i.created_at, i.accepted_at
-		FROM room_invites i
-		JOIN rooms r ON r.id = i.room_id
-		JOIN users inv ON inv.id = i.inviter_id
-		JOIN users e ON e.id = i.invitee_id
-		WHERE i.id = $1 AND (i.invitee_id = $2 OR i.inviter_id = $2)`,
+	return scanInvite(s.Q.QueryRow(ctx, inviteQuery+
+		`WHERE i.id = $1 AND (i.invitee_id = $2 OR i.inviter_id = $2)`,
 		inviteID, userID))
 }
 
@@ -60,21 +64,6 @@ func scanInvite(row pgx.Row) (InviteRow, error) {
 		&i.InviterID, &i.InviterName, &i.InviteeID, &i.InviteeName,
 		&i.Status, &i.ExpiresAt, &i.CreatedAt, &i.AcceptedAt)
 	return i, err
-}
-
-// InviteByID returns any invite by id (base record; authorization is the
-// service's job).
-func (s *Store) InviteByID(ctx context.Context, inviteID string) (InviteRow, error) {
-	return scanInvite(s.Q.QueryRow(ctx, `
-		SELECT i.id, i.room_id, r.name, r.type::text,
-			i.inviter_id, inv.display_name,
-			i.invitee_id, e.display_name,
-			i.status::text, i.expires_at, i.created_at, i.accepted_at
-		FROM room_invites i
-		JOIN rooms r ON r.id = i.room_id
-		JOIN users inv ON inv.id = i.inviter_id
-		JOIN users e ON e.id = i.invitee_id
-		WHERE i.id = $1`, inviteID))
 }
 
 // UpdateInviteStatus moves a pending invite to its new status. Status values
@@ -97,17 +86,9 @@ func (s *Store) UpdateInviteStatus(ctx context.Context, inviteID string, status 
 }
 
 func (s *Store) InvitesForUser(ctx context.Context, userID string) ([]InviteRow, error) {
-	rows, err := s.Q.Query(ctx, `
-		SELECT i.id, i.room_id, r.name, r.type::text,
-			i.inviter_id, inv.display_name,
-			i.invitee_id, e.display_name,
-			i.status::text, i.expires_at, i.created_at, i.accepted_at
-		FROM room_invites i
-		JOIN rooms r ON r.id = i.room_id
-		JOIN users inv ON inv.id = i.inviter_id
-		JOIN users e ON e.id = i.invitee_id
-		WHERE i.invitee_id = $1 AND i.status = 'pending'
-			AND (i.expires_at IS NULL OR i.expires_at > now())
+	rows, err := s.Q.Query(ctx, inviteQuery+
+		`WHERE i.invitee_id = $1 AND i.status = 'pending'
+		AND (i.expires_at IS NULL OR i.expires_at > now())
 		ORDER BY i.created_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -125,16 +106,8 @@ func (s *Store) InvitesForUser(ctx context.Context, userID string) ([]InviteRow,
 }
 
 func (s *Store) InvitesForRoom(ctx context.Context, roomID string) ([]InviteRow, error) {
-	rows, err := s.Q.Query(ctx, `
-		SELECT i.id, i.room_id, r.name, r.type::text,
-			i.inviter_id, inv.display_name,
-			i.invitee_id, e.display_name,
-			i.status::text, i.expires_at, i.created_at, i.accepted_at
-		FROM room_invites i
-		JOIN rooms r ON r.id = i.room_id
-		JOIN users inv ON inv.id = i.inviter_id
-		JOIN users e ON e.id = i.invitee_id
-		WHERE i.room_id = $1 AND i.status = 'pending'
+	rows, err := s.Q.Query(ctx, inviteQuery+
+		`WHERE i.room_id = $1 AND i.status = 'pending'
 		ORDER BY i.created_at DESC`, roomID)
 	if err != nil {
 		return nil, err

@@ -31,8 +31,6 @@ type User struct {
 	LastSeenAt  *time.Time `json:"last_seen_at"`
 }
 
-func (u User) Self() bool { return u.Email != "" }
-
 // Contact relationships are one-way (ADR-010).
 type Contact struct {
 	ID        string    `json:"id"` // the contact's user id; used for DELETE
