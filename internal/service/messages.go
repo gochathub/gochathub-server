@@ -278,6 +278,7 @@ func (ms *MessageService) assemble(ctx context.Context, row store.MessageRow, au
 	}
 	if row.DeletedAt != nil {
 		msg.Body = "" // tombstone: no content
+		atts = nil    // ...and no files or presigned URLs either
 	}
 	msg.Author = &author
 	if len(atts) > 0 {

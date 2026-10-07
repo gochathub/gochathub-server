@@ -157,9 +157,8 @@ func (as *AttachmentService) Delete(ctx context.Context, p Principal, attachID s
 	if err := as.App.Store.DeleteAttachment(ctx, attachID, a.UploaderID); err != nil {
 		return fmt.Errorf("delete attachment: %w", err)
 	}
-	if a.UploaderID == p.UserID || p.IsAdmin() {
-		_ = as.App.Storage.Delete(ctx, a.StorageKey)
-	}
+	// soft delete: the row is hidden (deleted_at) but the stored object stays
+	// so the delete can be audited and undone; purge is a separate job.
 	_ = as.App.Store.Audit(ctx, p.UserID, "attachment.delete", "attachment", attachID, []byte(`{}`), nil)
 	return nil
 }
