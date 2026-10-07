@@ -220,9 +220,11 @@ func (s *Store) MemberRole(ctx context.Context, roomID, userID string) (string, 
 }
 
 func (s *Store) AddMember(ctx context.Context, roomID, userID, role string) error {
+	// DO NOTHING: re-adding an existing member (self-join, double-accept)
+	// must not rewrite their role (would demote a room admin to member).
 	_, err := s.Q.Exec(ctx,
 		`INSERT INTO room_members (room_id, user_id, role) VALUES ($1, $2, $3)
-		 ON CONFLICT (room_id, user_id) DO UPDATE SET role = $3`,
+		 ON CONFLICT (room_id, user_id) DO NOTHING`,
 		roomID, userID, role)
 	return err
 }
@@ -247,14 +249,16 @@ func (s *Store) SetReadCursor(ctx context.Context, roomID, userID, messageID str
 // users, or ErrNotFound. Ensures one DM per peer pair.
 func (s *Store) GetDirectRoomBetween(ctx context.Context, userA, userB string) (string, error) {
 	var id string
-	err := s.Q.QueryRow(ctx, `
+	if err := s.Q.QueryRow(ctx, `
 		SELECT r.id FROM rooms r
 		JOIN room_members a ON a.room_id = r.id AND a.user_id = $1
 		JOIN room_members b ON b.room_id = r.id AND b.user_id = $2
 		WHERE r.type = 'direct' AND r.archived_at IS NULL
-		LIMIT 1`, userA, userB).Scan(&id)
-	if err != nil {
-		return "", ErrNotFound
+		LIMIT 1`, userA, userB).Scan(&id); err != nil {
+		// pgx.ErrNoRows is store.ErrNotFound; real DB errors surface raw so
+		// the caller's reuse-if-nil keeps honest (duplicate DMs beat silent
+		// fault masking)
+		return "", err
 	}
 	return id, nil
 }

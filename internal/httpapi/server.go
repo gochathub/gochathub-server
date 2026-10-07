@@ -22,9 +22,14 @@ type API struct {
 	cfg        *config.Config
 	mux        *http.ServeMux
 	rate       *limiter
+	loginRate  *limiter
 	trustProxy bool
 	cookieName string
 }
+
+// loginRPM: dedicated per-IP bucket for password attempts; the shared global
+// bucket is too generous to be the only brute-force ceiling.
+const loginRPM = 10
 
 // New builds routes + middleware chain.
 func New(svc *service.App, hub *ws.Hub, log *slog.Logger, cfg *config.Config) *API {
@@ -34,6 +39,7 @@ func New(svc *service.App, hub *ws.Hub, log *slog.Logger, cfg *config.Config) *A
 		log:        log,
 		cfg:        cfg,
 		rate:       newLimiter(cfg.RateLimitRPM),
+		loginRate:  newLimiter(loginRPM),
 		trustProxy: cfg.TrustProxy,
 		cookieName: cookieName(cfg.CookieSecure),
 	}

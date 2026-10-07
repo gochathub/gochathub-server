@@ -3,3 +3,5 @@
 /tmp/
 bin/
 CLAUDE.md
+.playwright-mcp/
+/gochathub-server

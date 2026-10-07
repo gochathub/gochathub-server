@@ -31,6 +31,12 @@ func (a *API) handleVersion(w http.ResponseWriter, r *http.Request) {
 // --- auth ---
 
 func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
+	// brute-force ceiling, independent of the general per-IP bucket
+	if !a.loginRate.allow(visitorIP(r, a.trustProxy)) {
+		w.Header().Set("Retry-After", "5")
+		writeError(w, 429, "rate_limited", "too many login attempts")
+		return
+	}
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`

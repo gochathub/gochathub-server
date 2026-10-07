@@ -80,25 +80,40 @@ func Load() (*Config, error) {
 	str(&c.ListenAddr, "LISTEN_ADDR")
 	str(&c.LogLevel, "LOG_LEVEL")
 	str(&c.BaseOrigin, "ORIGIN")
-	dur := 30 * 24 * time.Hour
-	durVar(&dur, "SESSION_TTL")
-	c.SessionTTL = dur
-	boolVar(&c.CookieSecure, "COOKIE_SECURE", true)
+	// typed helpers fail fast: a typo'd env var must not silently fall back
+	if err = boolVar(&c.CookieSecure, "COOKIE_SECURE", true); err != nil {
+		return nil, err
+	}
+	if err = boolVar(&c.S3UseTLS, "S3_USE_TLS", true); err != nil {
+		return nil, err
+	}
 	str(&c.S3Endpoint, "S3_ENDPOINT")
 	str(&c.S3Region, "S3_REGION")
 	str(&c.S3Bucket, "S3_BUCKET")
 	str(&c.S3AccessKey, "S3_ACCESS_KEY")
 	str(&c.S3SecretKey, "S3_SECRET_KEY")
-	boolVar(&c.S3UseTLS, "S3_USE_TLS", true)
-	sizeVar(&c.MaxUpload, "MAX_UPLOAD_BYTES")
-	boolVar(&c.AllowUploads, "ALLOW_UPLOADS", true)
 	str(&c.VAPIDPrivateKey, "VAPID_PRIVATE_KEY")
 	str(&c.VAPIDPublicKey, "VAPID_PUBLIC_KEY")
 	str(&c.VAPIDSubscriber, "VAPID_SUBSCRIBER")
 	str(&c.NtfyQueryFlag, "PUSH_NTFY_QUERY")
 	c.PushAllowHosts = splitList("PUSH_ALLOW_HOSTS")
-	intVar(&c.RateLimitRPM, "RATE_LIMIT_RPM")
-	boolVar(&c.TrustProxy, "TRUST_PROXY", true)
+	if err = sizeVar(&c.MaxUpload, "MAX_UPLOAD_BYTES"); err != nil {
+		return nil, err
+	}
+	if err = boolVar(&c.AllowUploads, "ALLOW_UPLOADS", true); err != nil {
+		return nil, err
+	}
+	if dur, derr := durVar("SESSION_TTL"); derr != nil {
+		return nil, derr
+	} else if dur > 0 {
+		c.SessionTTL = dur
+	}
+	if err = intVar(&c.RateLimitRPM, "RATE_LIMIT_RPM"); err != nil {
+		return nil, err
+	}
+	if err = boolVar(&c.TrustProxy, "TRUST_PROXY", true); err != nil {
+		return nil, err
+	}
 	if (c.S3Endpoint == "") != (c.S3Bucket == "") || (c.S3AccessKey == "") != (c.S3SecretKey == "") {
 		return nil, errors.New("attachment storage requires S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY and S3_SECRET_KEY together")
 	}
@@ -119,36 +134,57 @@ func str(dst *string, name string) {
 	}
 }
 
-func boolVar(dst *bool, name string, def bool) {
-	if v := os.Getenv(name); v != "" {
-		def, _ = strconv.ParseBool(v)
+func boolVar(dst *bool, name string, def bool) error {
+	v := os.Getenv(name)
+	if v == "" {
+		*dst = def
+		return nil
 	}
-	*dst = def
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fmt.Errorf("env %s: bad bool %q", name, v)
+	}
+	*dst = b
+	return nil
 }
 
-func durVar(dst *time.Duration, name string) {
-	if v := os.Getenv(name); v != "" {
-		d, err := time.ParseDuration(v)
-		if err == nil {
-			*dst = d
-		}
+// durVar returns (0, nil) when unset (caller keeps the packed default).
+func durVar(name string) (time.Duration, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return 0, nil
 	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("env %s: bad duration %q", name, v)
+	}
+	return d, nil
 }
 
-func sizeVar(dst *int64, name string) {
-	if v := os.Getenv(name); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			*dst = n
-		}
+func sizeVar(dst *int64, name string) error {
+	v := os.Getenv(name)
+	if v == "" {
+		return nil
 	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fmt.Errorf("env %s: bad byte size %q", name, v)
+	}
+	*dst = n
+	return nil
 }
 
-func intVar(dst *int, name string) {
-	if v := os.Getenv(name); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			*dst = n
-		}
+func intVar(dst *int, name string) error {
+	v := os.Getenv(name)
+	if v == "" {
+		return nil
 	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fmt.Errorf("env %s: bad int %q", name, v)
+	}
+	*dst = n
+	return nil
 }
 
 func splitList(name string) []string {

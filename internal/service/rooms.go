@@ -17,6 +17,9 @@ type Notifier interface {
 	// SubscribedToRoom reports live subscribers for push suppression
 	// (docs/PUSH.md: no push to users already viewing the room).
 	SubscribedToRoom(userID, roomID string) bool
+	// RemoveFromRoom drops a user's live room subscription (kick/leave) so
+	// fan-out stops before the client relearns membership via REST.
+	RemoveFromRoom(userID, roomID string)
 	Connected(uid string) bool
 }
 
@@ -80,7 +83,13 @@ func (rs *RoomService) Create(ctx context.Context, p Principal, in CreateInput) 
 			}
 		}
 		target, err := rs.App.Store.UserByID(ctx, other)
+		if errors.Is(err, store.ErrNotFound) {
+			return model.Room{}, ErrNotFound
+		}
 		if err != nil {
+			return model.Room{}, fmt.Errorf("lookup target: %w", err)
+		}
+		if !target.Enabled {
 			return model.Room{}, ErrNotFound
 		}
 		prefs := decodePrefs(target.Preferences)
@@ -94,9 +103,17 @@ func (rs *RoomService) Create(ctx context.Context, p Principal, in CreateInput) 
 	case model.RoomGroupDir:
 		members = append(members, p.UserID)
 		for _, m := range in.Members {
-			if m != p.UserID {
-				members = append(members, m)
+			if m == p.UserID {
+				continue
 			}
+			// validate before insert: FK failures would 500 and the room
+			// would have been created with partial membership
+			if _, err := rs.App.Store.UserByID(ctx, m); errors.Is(err, store.ErrNotFound) {
+				return model.Room{}, bad("unknown member %q", m)
+			} else if err != nil {
+				return model.Room{}, fmt.Errorf("lookup member: %w", err)
+			}
+			members = append(members, m)
 		}
 		if in.Name == "" {
 			return model.Room{}, bad("name required for group rooms")
@@ -104,16 +121,22 @@ func (rs *RoomService) Create(ctx context.Context, p Principal, in CreateInput) 
 		name := in.Name
 		room.Name = &name
 	}
-	if err := rs.App.Store.CreateRoom(ctx, room, true); err != nil {
-		return model.Room{}, fmt.Errorf("create room: %w", err)
-	}
-	for _, m := range members {
-		if m == p.UserID {
-			continue
+	err := rs.App.Store.WithTx(ctx, func(tx *store.Store) error {
+		if err := tx.CreateRoom(ctx, room, true); err != nil {
+			return fmt.Errorf("create room: %w", err)
 		}
-		if err := rs.App.Store.AddMember(ctx, room.ID, m, "member"); err != nil {
-			return model.Room{}, fmt.Errorf("add member: %w", err)
+		for _, m := range members {
+			if m == p.UserID {
+				continue
+			}
+			if err := tx.AddMember(ctx, room.ID, m, "member"); err != nil {
+				return fmt.Errorf("add member: %w", err)
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return model.Room{}, err
 	}
 	rr := *room
 	return rs.toModel(ctx, rr, "admin", 0), nil
@@ -259,6 +282,9 @@ func (rs *RoomService) RemoveMember(ctx context.Context, p Principal, roomID, us
 	rs.App.Notify.ToRoom(roomID, NewEnvelope(ctx, "room.member_removed", roomID, map[string]any{
 		"user_id": userID,
 	}))
+	// revoke the removed user's live subscription; the broadcast above still
+	// reached them (removal notice), fan-out after is blocked.
+	rs.App.Notify.RemoveFromRoom(userID, roomID)
 	return nil
 }
 

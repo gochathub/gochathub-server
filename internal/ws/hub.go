@@ -92,6 +92,25 @@ func (h *Hub) Unsubscribe(c *clientConn, roomID string) {
 	}
 }
 
+// RemoveFromRoom implements service.Notifier: membership was revoked
+// server-side (kick/leave), so drop the room from the hub index and every
+// live connection's own subscription list.
+func (h *Hub) RemoveFromRoom(userID, roomID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if uids := h.rooms[roomID]; uids != nil {
+		delete(uids, userID)
+		if len(uids) == 0 {
+			delete(h.rooms, roomID)
+		}
+	}
+	for c := range h.clients[userID] {
+		c.mu.Lock()
+		delete(c.rooms, roomID)
+		c.mu.Unlock()
+	}
+}
+
 // SubscribedToRoom implements service.Notifier push suppression.
 func (h *Hub) SubscribedToRoom(userID, roomID string) bool {
 	h.mu.Lock()

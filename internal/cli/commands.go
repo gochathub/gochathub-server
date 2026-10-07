@@ -47,6 +47,7 @@ func serveCmd() *cobra.Command {
 				Addr:              b.cfg.ListenAddr,
 				Handler:           api,
 				ReadHeaderTimeout: 10 * time.Second,
+				IdleTimeout:       2 * time.Minute,
 			}
 			b.log.Info("listening", "addr", b.cfg.ListenAddr)
 			errCh := make(chan error, 1)

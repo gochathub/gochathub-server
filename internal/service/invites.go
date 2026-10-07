@@ -104,6 +104,9 @@ func (is *InviteService) Accept(ctx context.Context, p Principal, inviteID strin
 	if i.InviteeID != p.UserID {
 		return ErrForbidden
 	}
+	if i.ExpiresAt != nil && !time.Now().Before(*i.ExpiresAt) {
+		return ErrNotFound // expired invites are as good as gone
+	}
 	if err := is.App.Store.UpdateInviteStatus(ctx, inviteID, "accepted"); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return ErrConflict // already closed or absent

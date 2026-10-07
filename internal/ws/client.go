@@ -90,7 +90,7 @@ func (h *Hub) writeLoop(c *clientConn) {
 				h.Log.WarnContext(ctx, "ws write failed", "user", c.UserID, "err", werr)
 				return
 			}
-			h.Log.InfoContext(ctx, "ws frame sent", "user", c.UserID, "type", env.Type)
+			h.Log.DebugContext(ctx, "ws frame sent", "user", c.UserID, "type", env.Type)
 		case <-ping.C:
 			if perr := c.conn.Ping(ctx); perr != nil {
 				return

@@ -55,11 +55,8 @@ func (ds *DeviceService) Register(ctx context.Context, p Principal, in RegisterI
 		return RegisterOutput{DeviceID: d.ID}, nil
 	}
 	// validate the three fields before persisting anything (§3.2 contract)
-	if len(in.Push.Endpoint) > 1000 || in.Push.Endpoint == "" {
-		return RegisterOutput{}, bad("endpoint required, max 1000 bytes")
-	}
-	if in.Push.PublicKey == "" || in.Push.AuthSecret == "" {
-		return RegisterOutput{}, bad("public_key and auth_secret required (connector-generated)")
+	if err := validatePushEndpoint(*in.Push); err != nil {
+		return RegisterOutput{}, err
 	}
 	e := &store.PushEndpointRow{
 		ID:         id.NewID(),
@@ -124,6 +121,9 @@ func (ds *DeviceService) Renew(ctx context.Context, p Principal, deviceID string
 	if err != nil {
 		return err
 	}
+	if err := validatePushEndpoint(in); err != nil {
+		return err
+	}
 	e := &store.PushEndpointRow{
 		ID:         id.NewID(),
 		DeviceID:   deviceID,
@@ -145,7 +145,22 @@ func (ds *DeviceService) Renew(ctx context.Context, p Principal, deviceID string
 	return nil
 }
 
+// validatePushEndpoint enforces the registration contract on every path that
+// stores an endpoint (register, renew).
+func validatePushEndpoint(in model.PushRegistration) error {
+	if len(in.Endpoint) > 1000 || in.Endpoint == "" {
+		return bad("endpoint required, max 1000 bytes")
+	}
+	if in.PublicKey == "" || in.AuthSecret == "" {
+		return bad("public_key and auth_secret required (connector-generated)")
+	}
+	return nil
+}
+
 func (ds *DeviceService) registerEndpointForDevice(ctx context.Context, p Principal, deviceID string, in model.PushRegistration) error {
+	if err := validatePushEndpoint(in); err != nil {
+		return err
+	}
 	e := &store.PushEndpointRow{
 		ID:         id.NewID(),
 		DeviceID:   deviceID,

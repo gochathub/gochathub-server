@@ -413,6 +413,37 @@ func TestInviteFlowAndReceipts(t *testing.T) {
 	}
 }
 
+// TestInviteExpiry: expired invites cannot be accepted (listing hides them;
+// the accept path is the hard line).
+func TestInviteExpiry(t *testing.T) {
+	url := testURL(t)
+	ts, svc := newServer(t, url, nil)
+	seedUsers(t, svc, "ealice", "ebob")
+	base := &client{t: t, b: ts.URL}
+	alice := base.forUser(svc, "ealice")
+	bob := base.forUser(svc, "ebob")
+
+	bobID := bob.str(bob.do("GET", "/api/v1/users/me", nil, 200), "id")
+	room := alice.do("POST", "/api/v1/rooms", map[string]any{"type": "private", "name": "past"}, 201)
+	roomID := alice.str(room, "id")
+
+	past := time.Now().Add(-time.Hour)
+	inv := alice.do("POST", "/api/v1/invites", map[string]any{
+		"room_id": roomID, "user_id": bobID, "expires_at": past.Format(time.RFC3339),
+	}, 201)
+	invID := alice.str(inv, "invite_id")
+
+	// expired invite is invisible to the invitee...
+	if rows := bob.doArr("GET", "/api/v1/invites", nil, 200); len(rows) != 0 {
+		t.Fatalf("expired invite listed: %v", rows)
+	}
+	// ...and the accept path refuses it
+	bob.do("POST", "/api/v1/invites/"+invID+"/accept", nil, 404)
+
+	// bob never joined the room
+	bob.do("GET", "/api/v1/rooms/"+roomID, nil, 404)
+}
+
 // TestPinningAuthz: member cannot pin, admin can.
 func TestPinningAuthz(t *testing.T) {
 	url := testURL(t)

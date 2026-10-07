@@ -97,10 +97,16 @@ func (as *AttachmentService) Complete(ctx context.Context, p Principal, attachID
 	if size != a.SizeBytes {
 		return model.Attachment{}, bad("uploaded size %d does not match session size %d", size, a.SizeBytes)
 	}
-	if a.SHA256 != "" && gotSHA != "" && gotSHA != a.SHA256 {
+	// ponytail: etag is md5 on vanilla S3; only compare when it is a
+	// sha256-sized hex (minio checksum mode), else declare-only integrity.
+	if a.SHA256 != "" && len(gotSHA) == 64 && gotSHA != a.SHA256 {
 		return model.Attachment{}, bad("sha256 mismatch")
 	}
-	ready, err := as.App.Store.CompleteAttachment(ctx, attachID, size, firstNonEmpty(a.SHA256, gotSHA))
+	sha := a.SHA256
+	if sha == "" && len(gotSHA) == 64 {
+		sha = gotSHA
+	}
+	ready, err := as.App.Store.CompleteAttachment(ctx, attachID, size, sha)
 	if err != nil {
 		return model.Attachment{}, fmt.Errorf("complete attachment: %w", err)
 	}
@@ -188,13 +194,4 @@ func sanitizeFilename(name string) string {
 		out = out[:255]
 	}
 	return out
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
