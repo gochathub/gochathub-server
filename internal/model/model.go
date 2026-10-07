@@ -59,11 +59,11 @@ type Room struct {
 	ArchivedAt      *time.Time `json:"archived_at,omitempty"`
 	// Archived is the caller's member-level archive flag (sidebar filter);
 	// rooms without membership context report false.
-	Archived    bool       `json:"archived,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	MyRole      string     `json:"my_role,omitempty"` // caller's member role
-	UnreadCount int64      `json:"unread_count,omitempty"`
+	Archived    bool      `json:"archived,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	MyRole      string    `json:"my_role,omitempty"` // caller's member role
+	UnreadCount int64     `json:"unread_count,omitempty"`
 }
 
 type InviteStatus string
