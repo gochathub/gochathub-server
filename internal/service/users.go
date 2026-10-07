@@ -151,6 +151,36 @@ func (u *UserService) ListUsers(ctx context.Context) ([]store.UserRow, error) {
 	return u.App.Store.ListUsers(ctx)
 }
 
+// CurrentUser renders the caller's own profile (self render: email + own
+// last-seen, prefs bypassed).
+func (u *UserService) CurrentUser(ctx context.Context, p Principal) (model.User, error) {
+	row, err := u.App.Store.UserByID(ctx, p.UserID)
+	if err != nil {
+		return model.User{}, ErrNotFound
+	}
+	return u.SelfUser(ctx, row)
+}
+
+// GetUser resolves another user's public profile under the same-visibility
+// rule (users you share a room, contact, or pending invite with — no
+// enumeration of strangers); otherwise ErrNotFound.
+func (u *UserService) GetUser(ctx context.Context, p Principal, userID string) (model.User, error) {
+	row, err := u.App.Store.UserByID(ctx, userID)
+	if err != nil {
+		return model.User{}, ErrNotFound
+	}
+	if row.ID != p.UserID {
+		visible, err := u.App.Store.UserVisibleTo(ctx, row.ID, p.UserID)
+		if err != nil {
+			return model.User{}, fmt.Errorf("visibility check: %w", err)
+		}
+		if !visible {
+			return model.User{}, ErrNotFound
+		}
+	}
+	return u.PublicUser(ctx, row)
+}
+
 // UpdateMe applies PATCH /users/me: display name, email, timezone (IANA,
 // validated here), avatar (owned ready attachment).
 func (u *UserService) UpdateMe(ctx context.Context, p Principal, in model.UpdateUserInput) (model.User, error) {

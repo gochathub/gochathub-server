@@ -94,12 +94,7 @@ func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
 	p, _ := principalFrom(r.Context())
-	row, err := a.svc.Store.UserByID(r.Context(), p.UserID)
-	if err != nil {
-		a.mapError(w, service.ErrNotFound)
-		return
-	}
-	self, err := a.svc.Users.SelfUser(r.Context(), row)
+	self, err := a.svc.Users.CurrentUser(r.Context(), p)
 	if err != nil {
 		a.mapError(w, err)
 		return
@@ -176,25 +171,7 @@ func (a *API) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	p, _ := principalFrom(r.Context())
-	row, err := a.svc.Store.UserByID(r.Context(), r.PathValue("userId"))
-	if err != nil {
-		a.mapError(w, service.ErrNotFound)
-		return
-	}
-	if row.ID != p.UserID {
-		// same-visibility rule: users you share a room with are visible to
-		// you; strangers are not (avoids user enumeration)
-		visible, err := a.svc.Store.UserVisibleTo(r.Context(), row.ID, p.UserID)
-		if err != nil {
-			a.mapError(w, err)
-			return
-		}
-		if !visible {
-			a.mapError(w, service.ErrNotFound)
-			return
-		}
-	}
-	u, err := a.svc.Users.PublicUser(r.Context(), row)
+	u, err := a.svc.Users.GetUser(r.Context(), p, r.PathValue("userId"))
 	if err != nil {
 		a.mapError(w, err)
 		return

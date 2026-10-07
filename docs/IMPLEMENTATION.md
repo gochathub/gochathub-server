@@ -77,7 +77,7 @@ on-device Android distributor test, idempotency keys, rate-limit tests.
 - [x] Reconnect/resync through REST (server design; client duty).
 - [x] Heartbeats (30s pings), presence (connect/leave), typing relay (ephemeral).
 - [x] Contact events, pin events, receipts-changed events.
-- [ ] PostgreSQL LISTEN/NOTIFY for multi-instance (only when deployed multi-process).
+- [ ] PostgreSQL LISTEN/NOTIFY for multi-instance (only when deployed multi-process). Note: also gates distributed presence broadcast and cross-instance push suppression (`SubscribedToRoom` is per-process).
 
 ## Android push
 

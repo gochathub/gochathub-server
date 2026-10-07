@@ -48,6 +48,8 @@ Prefer presigned upload/download URLs so large files do not need to pass through
 
 The storage implementation should be replaceable without changing API semantics.
 
+Degradation policy: `serve` fails fast when object storage is unreachable at boot (attachment features are core to serving); admin CLI commands degrade to the Disabled storage implementation instead — administrative operations do not need the object store.
+
 ### 4. WebSocket
 
 WebSocket is the realtime path for connected clients.
