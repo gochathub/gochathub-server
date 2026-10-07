@@ -77,6 +77,13 @@ Typing and presence are ephemeral and should not be persisted.
 
 WebSocket is not the authoritative storage mechanism.
 
+Membership revocation must drop live subscriptions: the hub's room index is
+a manually-invalidated cache of `room_members`. Every server-side write path
+that removes a member MUST call `Notify.RemoveFromRoom(userID, roomID)` —
+`RoomService.RemoveMember` is the single chokepoint (admin kick and
+self-leave both route through it). Granting membership needs no hub call;
+subscribing rechecks the database.
+
 If a connection drops:
 
 1. reconnect

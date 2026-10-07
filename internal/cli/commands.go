@@ -75,18 +75,12 @@ func assembleFor(b *boot) (*service.App, error) {
 	return svc, nil
 }
 
-// minimalApp wires services that need no external infra.
+// minimalApp wires services that need no external infra (CLI ops work
+// without S3/ntfy); the service graph itself comes from app.WireServices.
 func minimalApp(b *boot) *service.App {
-	app := service.App{Store: b.q, Log: b.log, Storage: storage.Disabled{}}
-	app.Users = service.UserService{App: &app}
-	app.Auth = &service.AuthService{App: &app, SessionTTL: b.cfg.SessionTTL}
-	app.Rooms = &service.RoomService{App: &app}
-	app.Messages = &service.MessageService{App: &app}
-	app.Contacts = &service.ContactService{App: &app}
-	app.Invites = &service.InviteService{App: &app}
-	app.Attachments = &service.AttachmentService{App: &app}
-	app.Devices = &service.DeviceService{App: &app}
-	return &app
+	svc := service.App{Store: b.q, Storage: storage.Disabled{}}
+	app.WireServices(&svc, b.log, b.cfg.SessionTTL)
+	return &svc
 }
 
 func migrateCmd() *cobra.Command {

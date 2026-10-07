@@ -39,29 +39,36 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 		return nil, nil, fmt.Errorf("vapid: %w", err)
 	}
 
-	app := &service.App{
+	svc := &service.App{
 		Store:          st,
-		Log:            log,
 		Storage:        stor,
 		AllowUploads:   cfg.AllowUploads && cfg.S3Endpoint != "",
 		MaxUploadBytes: cfg.MaxUpload,
 		BaseOrigin:     cfg.BaseOrigin,
 		Sender:         sender,
 	}
+	WireServices(svc, log, cfg.SessionTTL)
+
+	hub := ws.NewHub(log)
+	hub.App = svc
+	svc.Notify = hub
+	sender.ActiveIn = hub.SubscribedToRoom
+	return svc, hub, nil
+}
+
+// WireServices attaches the shared service graph. Both the server and the
+// CLI degrade-path (cli.minimalApp) call it — one wiring, no drift
+// (docs/CLI.md).
+func WireServices(app *service.App, log *slog.Logger, sessionTTL time.Duration) {
+	app.Log = log
 	app.Users = service.UserService{App: app}
-	app.Auth = &service.AuthService{App: app, SessionTTL: cfg.SessionTTL}
+	app.Auth = &service.AuthService{App: app, SessionTTL: sessionTTL}
 	app.Rooms = &service.RoomService{App: app}
 	app.Messages = &service.MessageService{App: app}
 	app.Contacts = &service.ContactService{App: app}
 	app.Invites = &service.InviteService{App: app}
 	app.Attachments = &service.AttachmentService{App: app}
 	app.Devices = &service.DeviceService{App: app}
-
-	hub := ws.NewHub(log)
-	hub.App = app
-	app.Notify = hub
-	sender.ActiveIn = hub.SubscribedToRoom
-	return app, hub, nil
 }
 
 func storageFor(ctx context.Context, cfg *config.Config) (service.Storage, error) {

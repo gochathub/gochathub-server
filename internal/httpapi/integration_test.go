@@ -352,6 +352,14 @@ func TestRoomPrivateAuthz(t *testing.T) {
 	// member-level archive (web archived view)
 	ove.do("PUT", "/api/v1/rooms/"+pubID+"/archived", map[string]any{"archived": true}, 204)
 	ove.do("PUT", "/api/v1/rooms/"+pubID+"/archived", map[string]any{"archived": false}, 204)
+
+	// kick: admin adds then removes; revoked access matches revoked membership
+	kickID := ove.str(ove.do("GET", "/api/v1/users/me", nil, 200), "id")
+	alice.do("POST", "/api/v1/rooms/"+pubID+"/members", map[string]any{"user_id": kickID}, 204)
+	ove.do("GET", "/api/v1/rooms/"+pubID, nil, 200)
+	alice.do("DELETE", "/api/v1/rooms/"+pubID+"/members/"+kickID, nil, 204)
+	ove.do("GET", "/api/v1/rooms/"+pubID, nil, 404)
+	ove.do("POST", "/api/v1/rooms/"+pubID+"/messages", map[string]any{"body": "sneak back"}, 404)
 }
 
 // TestInviteFlowAndReceipts: invite→accept→message→read receipts.

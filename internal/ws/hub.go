@@ -20,7 +20,10 @@ type Hub struct {
 
 	mu      sync.Mutex
 	clients map[string]map[*clientConn]struct{} // userID → conns
-	rooms   map[string]map[string]struct{}      // roomID → subscribed userIDs
+	// ponytail: rooms is a manually-invalidated cache of DB membership.
+	// revocation must flow through service.Notify.RemoveFromRoom —
+	// RoomService.RemoveMember is the single chokepoint (kick + self-leave).
+	rooms map[string]map[string]struct{} // roomID → subscribed userIDs
 }
 
 // PrincipalFor builds the socket principal (role re-resolved by services
