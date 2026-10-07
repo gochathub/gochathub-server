@@ -24,11 +24,18 @@ type InviteRow struct {
 }
 
 func (s *Store) CreateInvite(ctx context.Context, i *InviteRow) error {
+	// upsert against the partial open-invite index: re-inviting refreshes
+	// the pending row (new inviter/expiry) instead of deadlocking the slot
+	// behind an invite that already expired but cannot be listed/accepted
 	return s.Q.QueryRow(ctx, `
 		INSERT INTO room_invites (id, room_id, inviter_id, invitee_id, expires_at)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING created_at`,
-		i.ID, i.RoomID, i.InviterID, i.InviteeID, i.ExpiresAt).Scan(&i.CreatedAt)
+		ON CONFLICT (room_id, invitee_id) WHERE status = 'pending'
+		DO UPDATE SET inviter_id = EXCLUDED.inviter_id, expires_at = EXCLUDED.expires_at
+		RETURNING id, created_at`,
+		i.ID, i.RoomID, i.InviterID, i.InviteeID, i.ExpiresAt).Scan(&i.ID, &i.CreatedAt)
+	// on conflict the pending row keeps its original id: the caller (and the
+	// notification) must address the live invite, not the discarded new id
 }
 
 // InviteForUser returns the invite only when the given user is invitee or

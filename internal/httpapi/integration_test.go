@@ -442,6 +442,16 @@ func TestInviteExpiry(t *testing.T) {
 
 	// bob never joined the room
 	bob.do("GET", "/api/v1/rooms/"+roomID, nil, 404)
+
+	// the expired pending row must not deadlock the (room, invitee) slot:
+	// re-inviting refreshes it, and the fresh invite works
+	inv2 := alice.do("POST", "/api/v1/invites", map[string]any{"room_id": roomID, "user_id": bobID}, 201)
+	inv2ID := alice.str(inv2, "invite_id")
+	bob.do("POST", "/api/v1/invites/"+inv2ID+"/accept", nil, 204)
+	bob.do("GET", "/api/v1/rooms/"+roomID, nil, 200)
+
+	// malformed uuid in a path param is 404, never 500
+	bob.do("POST", "/api/v1/invites/not-a-uuid/accept", nil, 404)
 }
 
 // TestPinningAuthz: member cannot pin, admin can.

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/gochathub/gochathub-server/internal/config"
 	"github.com/gochathub/gochathub-server/internal/service"
 	"github.com/gochathub/gochathub-server/internal/ws"
@@ -236,6 +238,14 @@ func decodeJSON(r *http.Request, dst any) error {
 // mapError converts service errors to the API envelope; unknown errors are
 // logged with context (never leaked to clients).
 func (a *API) mapError(w http.ResponseWriter, err error) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
+		// malformed uuid in path/body params: resource cannot exist → 404
+		// (paths that already fold every lookup error into ErrNotFound do
+		// this implicitly; this keeps invites/accept and friends consistent)
+		writeError(w, 404, "not_found", "not found")
+		return
+	}
 	switch {
 	case errors.Is(err, service.ErrUnauthorized):
 		writeError(w, 401, "unauthorized", "invalid credentials")
