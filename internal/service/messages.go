@@ -100,7 +100,12 @@ func (ms *MessageService) Create(ctx context.Context, p Principal, roomID string
 		"message": msg,
 	}))
 	if ms.App.Sender != nil {
-		ms.App.Sender.NotifyMessage(ctx, roomID, m.ID, p.UserID, mentionIDs)
+		// async: push is non-authoritative (ADR-003) and each endpoint send
+		// can block seconds — the response must not wait for fan-out.
+		// WithoutCancel survives the handler returning; per-endpoint goroutine
+		// parallelism stays a ponytail ceiling (sequential is fine below ~100
+		// endpoints).
+		go ms.App.Sender.NotifyMessage(context.WithoutCancel(ctx), roomID, m.ID, p.UserID, mentionIDs)
 	}
 	return msg, nil
 }
