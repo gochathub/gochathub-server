@@ -718,6 +718,82 @@ func TestReceiptsPreferenceGating(t *testing.T) {
 	}
 }
 
+// TestRoomsArchiveSoftDelete: group creator (room admin) deletes the group —
+// it leaves every member's list, non-admin members get 403, and self-leave
+// removes one member without touching others (web archived view stays
+// member-local: m.archived is unaffected).
+func TestRoomsArchiveSoftDelete(t *testing.T) {
+	url := testURL(t)
+	ts, svc := newServer(t, url, nil)
+	seedUsers(t, svc, "agalice", "agbob")
+	base := &client{t: t, b: ts.URL}
+	alice := base.forUser(svc, "agalice")
+	bob := base.forUser(svc, "agbob")
+
+	bobID := bob.str(bob.do("GET", "/api/v1/users/me", nil, 200), "id")
+	room := alice.do("POST", "/api/v1/rooms", map[string]any{"type": "group_direct", "name": "team", "members": []string{bobID}}, 201)
+	roomID := alice.str(room, "id")
+
+	// non-admin member cannot delete the group
+	bob.do("DELETE", "/api/v1/rooms/"+roomID, nil, 403)
+
+	// visible in both members' lists before the delete
+	if ids := roomIDs(bob.doArr("GET", "/api/v1/rooms", nil, 200)); !ids[roomID] {
+		t.Fatalf("room missing from bob's list before delete: %v", ids)
+	}
+
+	// creator deletes; room vanishes from both lists (archived_at filter)
+	alice.do("DELETE", "/api/v1/rooms/"+roomID, nil, 204)
+	if ids := roomIDs(alice.doArr("GET", "/api/v1/rooms", nil, 200)); ids[roomID] {
+		t.Fatalf("archived room still in alice's list: %v", ids)
+	}
+	if ids := roomIDs(bob.doArr("GET", "/api/v1/rooms", nil, 200)); ids[roomID] {
+		t.Fatalf("archived room still in bob's list: %v", ids)
+	}
+
+	// repeat-delete stays 204 (idempotent soft delete)
+	alice.do("DELETE", "/api/v1/rooms/"+roomID, nil, 204)
+}
+
+// TestRoomsSelfLeave: a member can leave a group on their own; other members
+// and the room itself are unaffected.
+func TestRoomsSelfLeave(t *testing.T) {
+	url := testURL(t)
+	ts, svc := newServer(t, url, nil)
+	seedUsers(t, svc, "lgalice", "lgbob")
+	base := &client{t: t, b: ts.URL}
+	alice := base.forUser(svc, "lgalice")
+	bob := base.forUser(svc, "lgbob")
+
+	bobID := bob.str(bob.do("GET", "/api/v1/users/me", nil, 200), "id")
+	room := alice.do("POST", "/api/v1/rooms", map[string]any{"type": "group_direct", "name": "team", "members": []string{bobID}}, 201)
+	roomID := alice.str(room, "id")
+
+	bob.do("DELETE", "/api/v1/rooms/"+roomID+"/members/"+bobID, nil, 204)
+	if ids := roomIDs(bob.doArr("GET", "/api/v1/rooms", nil, 200)); ids[roomID] {
+		t.Fatalf("left room still in bob's list: %v", ids)
+	}
+	if ids := roomIDs(alice.doArr("GET", "/api/v1/rooms", nil, 200)); !ids[roomID] {
+		t.Fatalf("alice lost the room after bob left: %v", ids)
+	}
+
+	// the room survives the leave; alice (admin) can still delete it later
+	alice.do("DELETE", "/api/v1/rooms/"+roomID, nil, 204)
+}
+
+// roomIDs is the set of ids in a GET /rooms response.
+func roomIDs(list []any) map[string]bool {
+	out := map[string]bool{}
+	for _, it := range list {
+		if m, ok := it.(map[string]any); ok {
+			if id, ok := m["id"].(string); ok {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}
+
 // TestLivePushValidationRoundTrip (live ntfy): full §3.3 flow through the
 // running API — register device → server pings token (encrypted) → client
 // decrypts via SSE → POST /devices/{id}/validate → 204.

@@ -130,7 +130,7 @@ func (s *Store) ListRoomsForUser(ctx context.Context, userID string) ([]RoomSumm
 		LEFT JOIN LATERAL (
 			SELECT count(*) AS member_count FROM room_members x WHERE x.room_id = r.id
 		) mc ON true
-		WHERE m.user_id = $1
+		WHERE m.user_id = $1 AND r.archived_at IS NULL
 		ORDER BY r.updated_at DESC`,
 		userID)
 	if err != nil {

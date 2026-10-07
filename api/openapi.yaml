@@ -360,7 +360,12 @@ paths:
       tags: [rooms]
       security: [{ bearerAuth: [] }]
       operationId: archiveRoom
-      description: Archives the room (admins); member-level archive lives on the client.
+      description: >
+        Soft-deletes the room (room admins; the creator of a group_direct room
+        is its admin). The room and its history remain in the database but
+        every member's room list omits it, and subscribers receive a
+        room.archived event (docs/WEBSOCKETS.md). Member-level archive lives
+        on the client via PUT /rooms/{roomId}/archived.
       responses:
         "204":
           description: Archived

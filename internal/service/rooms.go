@@ -214,8 +214,10 @@ func (rs *RoomService) Update(ctx context.Context, p Principal, roomID string, i
 	return rs.toModel(ctx, updated, role, 0), nil
 }
 
-// Archive rooms server-side (admins only); member-level archive is a
-// separate per-user flag.
+// Archive rooms server-side (admins only) — a soft delete: the room row and
+// its history stay in the database, but the room leaves every member's list
+// (ListRoomsForUser filters archived_at) and subscribers get room.archived.
+// Member-level archive is a separate per-user flag.
 func (rs *RoomService) Archive(ctx context.Context, p Principal, roomID string) error {
 	_, role, err := rs.App.Store.RoomForUser(ctx, roomID, p.UserID)
 	if err != nil {
@@ -227,6 +229,7 @@ func (rs *RoomService) Archive(ctx context.Context, p Principal, roomID string) 
 	if err := rs.App.Store.ArchiveRoom(ctx, roomID); err != nil {
 		return fmt.Errorf("archive room: %w", err)
 	}
+	rs.App.Notify.ToRoom(roomID, NewEnvelope(ctx, "room.archived", roomID, map[string]any{}))
 	return rs.App.Store.Audit(ctx, p.UserID, "room.archive", "room", roomID, []byte(`{}`), nil)
 }
 
