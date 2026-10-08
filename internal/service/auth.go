@@ -16,6 +16,7 @@ import (
 type AuthService struct {
 	App        *App
 	SessionTTL time.Duration
+	Now        func() time.Time // test clock for TOTP steps; nil = time.Now
 }
 
 // Principal identifies an authenticated actor.
@@ -61,6 +62,15 @@ func (a *AuthService) Login(ctx context.Context, username, password, userAgent s
 				a.App.Log.ErrorContext(ctx, "re-hash legacy password", "user", row.ID, "err", uerr)
 			}
 		}
+	}
+	if t, terr := a.App.Store.TOTPByUser(ctx, row.ID); terr == nil && t.Enabled {
+		ch := id.NewToken()
+		if err := a.App.Store.CreateLoginChallenge(ctx, id.HashToken(ch), row.ID, time.Now().Add(challengeTTL)); err != nil {
+			return "", store.UserRow{}, fmt.Errorf("create challenge: %w", err)
+		}
+		return "", store.UserRow{}, &TwoFactorRequired{Challenge: ch}
+	} else if terr != nil && !errors.Is(terr, store.ErrNotFound) {
+		return "", store.UserRow{}, fmt.Errorf("totp lookup: %w", terr)
 	}
 	return a.issueSession(ctx, row, userAgent, ip)
 }

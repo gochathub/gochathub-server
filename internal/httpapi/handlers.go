@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/gochathub/gochathub-server/internal/model"
 	"github.com/gochathub/gochathub-server/internal/service"
+	"github.com/gochathub/gochathub-server/internal/store"
 )
 
 const version = "dev" // set via ldflags in the build
@@ -50,6 +52,32 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := ipForAudit(r, a.trustProxy)
 	token, user, err := a.svc.Auth.Login(r.Context(), in.Username, in.Password, r.UserAgent(), ip)
+	var tf *service.TwoFactorRequired
+	if errors.As(err, &tf) {
+		writeJSON(w, 401, map[string]any{"error": map[string]string{
+			"code": "two_factor_required", "message": "two-factor code required", "challenge": tf.Challenge,
+		}})
+		return
+	}
+	a.finishLogin(w, r, token, user, err, in.TokenRequest)
+}
+
+// handleLogin2FA redeems the challenge from a two_factor_required login.
+func (a *API) handleLogin2FA(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Challenge    string `json:"challenge"`
+		Code         string `json:"code"`
+		TokenRequest bool   `json:"token_request"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	token, user, err := a.svc.Auth.Login2FA(r.Context(), in.Challenge, in.Code, r.UserAgent(), ipForAudit(r, a.trustProxy))
+	a.finishLogin(w, r, token, user, err, in.TokenRequest)
+}
+
+func (a *API) finishLogin(w http.ResponseWriter, r *http.Request, token string, user store.UserRow, err error, tokenRequest bool) {
 	if err != nil {
 		a.mapError(w, err)
 		return
@@ -61,10 +89,71 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, a.sessionCookie(token, r))
 	out := map[string]any{"user": self}
-	if in.TokenRequest {
+	if tokenRequest {
 		out["token"] = token
 	}
 	writeJSON(w, 200, out)
+}
+
+// --- two-factor (TOTP) ---
+
+func (a *API) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	secret, url, err := a.svc.Auth.SetupTOTP(r.Context(), p)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"secret": secret, "otpauth_url": url})
+}
+
+type codeBody struct {
+	Code     string `json:"code"`
+	Password string `json:"password"`
+}
+
+func (a *API) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in codeBody
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	codes, err := a.svc.Auth.EnableTOTP(r.Context(), p, in.Code)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"backup_codes": codes})
+}
+
+func (a *API) handleTOTPBackupCodes(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in codeBody
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	codes, err := a.svc.Auth.RegenerateBackupCodes(r.Context(), p, in.Code)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"backup_codes": codes})
+}
+
+func (a *API) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in codeBody
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	if err := a.svc.Auth.DisableTOTP(r.Context(), p, in.Password, in.Code); err != nil {
+		a.mapError(w, err)
+		return
+	}
+	w.WriteHeader(204)
 }
 
 // sessionCookie builds the ADR-015 cookie.

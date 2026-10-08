@@ -117,8 +117,26 @@ func versionCmd() *cobra.Command {
 
 func userCmd() *cobra.Command {
 	c := &cobra.Command{Use: "user", Short: "Manage user accounts"}
-	c.AddCommand(userCreate(), userList(), userPasswd(), userEnable(), userDisable(), userDelete())
+	c.AddCommand(userCreate(), userList(), userPasswd(), user2FAReset(), userEnable(), userDisable(), userDelete())
 	return c
+}
+
+func user2FAReset() *cobra.Command {
+	return &cobra.Command{
+		Use: "2fa-reset <username>", Short: "Remove a user's two-factor auth (lost device; revokes sessions)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			b, closeFn, err := bootstrap()
+			if err != nil {
+				return err
+			}
+			defer closeFn()
+			app, err := assembleFor(b)
+			if err != nil {
+				return err
+			}
+			return app.Auth.ResetTOTP(cmd.Context(), args[0])
+		},
+	}
 }
 
 func userCreate() *cobra.Command {

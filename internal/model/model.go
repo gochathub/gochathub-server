@@ -29,6 +29,8 @@ type User struct {
 	Timezone    string     `json:"timezone,omitempty"` // IANA name; self payload and contacts
 	AvatarURL   string     `json:"avatar_url"`
 	LastSeenAt  *time.Time `json:"last_seen_at"`
+	// TwoFactorEnabled is present on self payloads only.
+	TwoFactorEnabled *bool `json:"two_factor_enabled,omitempty"`
 }
 
 // Contact relationships are one-way (ADR-010).

@@ -97,15 +97,25 @@ func (u *UserService) render(ctx context.Context, row store.UserRow, self bool) 
 	if self {
 		email = valueOf(row.Email)
 	}
+	var twoFactor *bool
+	if self {
+		t, err := u.App.Store.TOTPByUser(ctx, row.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return model.User{}, fmt.Errorf("totp status: %w", err)
+		}
+		on := err == nil && t.Enabled
+		twoFactor = &on
+	}
 	return model.User{
-		ID:          row.ID,
-		Username:    row.Username,
-		DisplayName: row.DisplayName,
-		Role:        row.Role,
-		Email:       email,
-		Timezone:    valueOf(row.Timezone),
-		AvatarURL:   u.avatarURL(ctx, row),
-		LastSeenAt:  lastSeenVisible(row.LastSeenAt, prefs, self),
+		ID:               row.ID,
+		Username:         row.Username,
+		DisplayName:      row.DisplayName,
+		Role:             row.Role,
+		Email:            email,
+		Timezone:         valueOf(row.Timezone),
+		AvatarURL:        u.avatarURL(ctx, row),
+		LastSeenAt:       lastSeenVisible(row.LastSeenAt, prefs, self),
+		TwoFactorEnabled: twoFactor,
 	}, nil
 }
 

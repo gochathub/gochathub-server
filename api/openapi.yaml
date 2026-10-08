@@ -75,6 +75,37 @@ paths:
               schema:
                 $ref: "#/components/schemas/AuthResponse"
         "401":
+          description: >
+            Bad credentials (`unauthorized`), or the password was right and the
+            account has two-factor enabled (`two_factor_required`, with
+            `error.challenge` — redeem it at `/auth/login/2fa`; no session
+            exists yet).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/login/2fa:
+    post:
+      tags: [auth]
+      operationId: login2fa
+      description: >
+        Redeem a `two_factor_required` challenge with a TOTP code or an unused
+        backup code. A challenge lives 5 minutes and allows 5 attempts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Login2FARequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
           $ref: "#/components/responses/Unauthorized"
 
   /auth/logout:
@@ -202,6 +233,104 @@ paths:
       responses:
         "204":
           description: Password changed; all sessions (including this one) revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/me/2fa/setup:
+    post:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: setupTwoFactor
+      description: >
+        Start TOTP enrollment. Returns the secret and an `otpauth://` URL for
+        a QR code; nothing is enforced until `/users/me/2fa/enable`.
+      responses:
+        "200":
+          description: Pending enrollment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TwoFactorSetup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Two-factor is already enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /users/me/2fa/enable:
+    post:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: enableTwoFactor
+      description: Confirm enrollment with a first TOTP code. Backup codes are shown once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TwoFactorCodeRequest"
+      responses:
+        "200":
+          description: Enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupCodes"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Two-factor is already enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /users/me/2fa/backup-codes:
+    post:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: regenerateBackupCodes
+      description: Replace all backup codes. Requires a current TOTP code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TwoFactorCodeRequest"
+      responses:
+        "200":
+          description: New backup codes (old ones are void)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupCodes"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/me/2fa:
+    delete:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: disableTwoFactor
+      description: Disable two-factor. Requires the password and a TOTP or backup code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DisableTwoFactorRequest"
+      responses:
+        "204":
+          description: Disabled
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1005,6 +1134,58 @@ components:
             `Authorization: Bearer` use; browser clients use the cookie only
             (ADR-015).
 
+    Login2FARequest:
+      type: object
+      required: [challenge, code]
+      properties:
+        challenge:
+          type: string
+          description: The `error.challenge` from a `two_factor_required` login.
+        code:
+          type: string
+          description: 6-digit TOTP code or a single-use backup code.
+        token_request:
+          type: boolean
+          default: false
+          description: Same meaning as on LoginRequest.
+
+    TwoFactorSetup:
+      type: object
+      required: [secret, otpauth_url]
+      properties:
+        secret:
+          type: string
+          description: Base32 secret for manual entry.
+        otpauth_url:
+          type: string
+          description: "`otpauth://totp/...` URI to render as a QR code."
+
+    TwoFactorCodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+
+    DisableTwoFactorRequest:
+      type: object
+      required: [password, code]
+      properties:
+        password:
+          type: string
+          format: password
+        code:
+          type: string
+
+    BackupCodes:
+      type: object
+      required: [backup_codes]
+      properties:
+        backup_codes:
+          type: array
+          items:
+            type: string
+
     AuthResponse:
       description: >
         Login response. Browsers: cookie set, `token` omitted. Clients that
@@ -1037,6 +1218,9 @@ components:
         email:
           type: string
           nullable: true
+          description: Present only on self payloads (GET/PATCH /users/me, login).
+        two_factor_enabled:
+          type: boolean
           description: Present only on self payloads (GET/PATCH /users/me, login).
         timezone:
           type: string

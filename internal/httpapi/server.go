@@ -72,12 +72,17 @@ func (a *API) routes() {
 
 	// auth
 	mux.Handle("POST /api/v1/auth/login", a.chain(false, http.HandlerFunc(a.handleLogin)))
+	mux.Handle("POST /api/v1/auth/login/2fa", a.chain(false, http.HandlerFunc(a.handleLogin2FA)))
 	mux.Handle("POST /api/v1/auth/logout", a.chain(true, http.HandlerFunc(a.handleLogout)))
 
 	// users
 	mux.Handle("GET /api/v1/users/me", a.chain(true, http.HandlerFunc(a.handleMe)))
 	mux.Handle("PATCH /api/v1/users/me", a.chain(true, http.HandlerFunc(a.handleUpdateMe)))
 	mux.Handle("PATCH /api/v1/users/me/password", a.chain(true, http.HandlerFunc(a.handlePatchPassword)))
+	mux.Handle("POST /api/v1/users/me/2fa/setup", a.chain(true, http.HandlerFunc(a.handleTOTPSetup)))
+	mux.Handle("POST /api/v1/users/me/2fa/enable", a.chain(true, http.HandlerFunc(a.handleTOTPEnable)))
+	mux.Handle("POST /api/v1/users/me/2fa/backup-codes", a.chain(true, http.HandlerFunc(a.handleTOTPBackupCodes)))
+	mux.Handle("DELETE /api/v1/users/me/2fa", a.chain(true, http.HandlerFunc(a.handleTOTPDisable)))
 	mux.Handle("GET /api/v1/users/me/preferences", a.chain(true, http.HandlerFunc(a.handleGetPrefs)))
 	mux.Handle("PATCH /api/v1/users/me/preferences", a.chain(true, http.HandlerFunc(a.handlePatchPrefs)))
 	mux.Handle("GET /api/v1/users/me/notifications", a.chain(true, http.HandlerFunc(a.handleListNotifModes)))
