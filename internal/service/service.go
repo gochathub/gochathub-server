@@ -154,25 +154,13 @@ func lastSeenVisible(t *time.Time, prefs model.Preferences, self bool) *time.Tim
 // opted in; group invites and private messages allowed until opted out
 // (ADR-013).
 func decodePrefs(raw []byte) model.Preferences {
-	p := model.Preferences{AllowGroupInvites: true, AllowPrivateMessages: true}
-	if len(raw) == 0 {
-		return p
+	defaults := model.Preferences{AllowGroupInvites: true, AllowPrivateMessages: true, SpellcheckWords: []string{}}
+	p := defaults
+	if len(raw) == 0 || json.Unmarshal(raw, &p) != nil {
+		return defaults
 	}
-	var stored map[string]bool
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		return p
-	}
-	if v, ok := stored["last_seen_visible"]; ok {
-		p.LastSeenVisible = v
-	}
-	if v, ok := stored["read_receipts"]; ok {
-		p.ReadReceipts = v
-	}
-	if v, ok := stored["allow_group_invites"]; ok {
-		p.AllowGroupInvites = v
-	}
-	if v, ok := stored["allow_private_messages"]; ok {
-		p.AllowPrivateMessages = v
+	if p.SpellcheckWords == nil {
+		p.SpellcheckWords = []string{}
 	}
 	return p
 }
@@ -198,6 +186,12 @@ func MergePreferences(stored []byte, patch model.PreferencesPatch) model.Prefere
 	}
 	if patch.AllowPrivateMessages != nil {
 		p.AllowPrivateMessages = *patch.AllowPrivateMessages
+	}
+	if patch.SpellcheckEnabled != nil {
+		p.SpellcheckEnabled = *patch.SpellcheckEnabled
+	}
+	if patch.SpellcheckWords != nil {
+		p.SpellcheckWords = *patch.SpellcheckWords
 	}
 	return p
 }

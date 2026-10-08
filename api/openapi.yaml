@@ -1267,7 +1267,7 @@ components:
 
     Preferences:
       type: object
-      required: [last_seen_visible, read_receipts, allow_group_invites, allow_private_messages]
+      required: [last_seen_visible, read_receipts, allow_group_invites, allow_private_messages, spellcheck_enabled, spellcheck_words]
       properties:
         last_seen_visible:
           type: boolean
@@ -1277,6 +1277,13 @@ components:
           type: boolean
         allow_private_messages:
           type: boolean
+        spellcheck_enabled:
+          type: boolean
+          description: Client-side grammar check toggle (stored only).
+        spellcheck_words:
+          type: array
+          items: { type: string }
+          description: Personal dictionary.
 
     UpdatePreferencesRequest:
       description: Partial update; omitted fields keep current values.
@@ -1290,6 +1297,12 @@ components:
           type: boolean
         allow_private_messages:
           type: boolean
+        spellcheck_enabled:
+          type: boolean
+        spellcheck_words:
+          type: array
+          maxItems: 1000
+          items: { type: string, minLength: 1, maxLength: 64 }
       minProperties: 1
 
     AddContactRequest:

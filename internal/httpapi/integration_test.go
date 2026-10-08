@@ -536,6 +536,13 @@ func TestProfileVisibility(t *testing.T) {
 		t.Fatalf("last_seen should be hidden by default: %v", bobP["last_seen_at"])
 	}
 
+	// spellcheck prefs round-trip alongside the privacy flags; bad words rejected
+	sp := alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"spellcheck_enabled": true, "spellcheck_words": []string{"gochathub"}}, 200)
+	if sp["spellcheck_enabled"] != true || len(sp["spellcheck_words"].([]any)) != 1 || sp["allow_group_invites"] != true {
+		t.Fatalf("spellcheck prefs: %v", sp)
+	}
+	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"spellcheck_words": []string{""}}, 400)
+
 	// alice allows last_seen
 	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"last_seen_visible": true}, 200)
 	bobP = bob.do("GET", "/api/v1/users/"+aliceID, nil, 200)

@@ -9,14 +9,19 @@ type Preferences struct {
 	ReadReceipts         bool `json:"read_receipts"`
 	AllowGroupInvites    bool `json:"allow_group_invites"`
 	AllowPrivateMessages bool `json:"allow_private_messages"`
+	// Client-side grammar check (UI only; the server just stores them).
+	SpellcheckEnabled bool     `json:"spellcheck_enabled"`
+	SpellcheckWords   []string `json:"spellcheck_words"`
 }
 
 // PreferencesPatch is the PATCH /users/me/preferences form (partial).
 type PreferencesPatch struct {
-	LastSeenVisible      *bool `json:"last_seen_visible,omitempty"`
-	ReadReceipts         *bool `json:"read_receipts,omitempty"`
-	AllowGroupInvites    *bool `json:"allow_group_invites,omitempty"`
-	AllowPrivateMessages *bool `json:"allow_private_messages,omitempty"`
+	LastSeenVisible      *bool     `json:"last_seen_visible,omitempty"`
+	ReadReceipts         *bool     `json:"read_receipts,omitempty"`
+	AllowGroupInvites    *bool     `json:"allow_group_invites,omitempty"`
+	AllowPrivateMessages *bool     `json:"allow_private_messages,omitempty"`
+	SpellcheckEnabled    *bool     `json:"spellcheck_enabled,omitempty"`
+	SpellcheckWords      *[]string `json:"spellcheck_words,omitempty"`
 }
 
 // User is the API user. `email` is only populated on self payloads.

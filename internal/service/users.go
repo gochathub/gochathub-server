@@ -251,6 +251,16 @@ func (u *UserService) GetPreferences(ctx context.Context, p Principal) (model.Pr
 
 // PatchPreferences merges the patch into stored prefs.
 func (u *UserService) PatchPreferences(ctx context.Context, p Principal, patch model.PreferencesPatch) (model.Preferences, error) {
+	if w := patch.SpellcheckWords; w != nil {
+		if len(*w) > 1000 {
+			return model.Preferences{}, bad("spellcheck_words: at most 1000 words")
+		}
+		for _, word := range *w {
+			if word == "" || len(word) > 64 {
+				return model.Preferences{}, bad("spellcheck_words: each word must be 1-64 bytes")
+			}
+		}
+	}
 	row, err := u.App.Store.UserByID(ctx, p.UserID)
 	if err != nil {
 		return model.Preferences{}, ErrNotFound
