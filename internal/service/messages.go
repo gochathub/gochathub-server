@@ -111,7 +111,7 @@ func (ms *MessageService) Create(ctx context.Context, p Principal, roomID string
 }
 
 // List hydrates a cursor page; caller must be a member.
-func (ms *MessageService) List(ctx context.Context, p Principal, roomID, before string, limit int) (model.MessagePage, error) {
+func (ms *MessageService) List(ctx context.Context, p Principal, roomID, before, search string, limit int) (model.MessagePage, error) {
 	if _, _, err := ms.App.Store.RoomForUser(ctx, roomID, p.UserID); err != nil {
 		return model.MessagePage{}, ErrNotFound
 	}
@@ -126,7 +126,7 @@ func (ms *MessageService) List(ctx context.Context, p Principal, roomID, before 
 		}
 		cur = &c
 	}
-	rows, err := ms.App.Store.ListMessagesPage(ctx, roomID, cur, limit)
+	rows, err := ms.App.Store.ListMessagesPage(ctx, roomID, cur, strings.TrimSpace(search), limit)
 	if err != nil {
 		return model.MessagePage{}, fmt.Errorf("list messages: %w", err)
 	}

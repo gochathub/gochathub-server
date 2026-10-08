@@ -436,7 +436,7 @@ func (a *API) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	p, _ := principalFrom(r.Context())
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	page, err := a.svc.Messages.List(r.Context(), p, r.PathValue("roomId"), q.Get("before"), limit)
+	page, err := a.svc.Messages.List(r.Context(), p, r.PathValue("roomId"), q.Get("before"), q.Get("q"), limit)
 	if err != nil {
 		a.mapError(w, err)
 		return

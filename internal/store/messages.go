@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,6 +20,8 @@ type MessageRow struct {
 	EditedAt         *time.Time
 	DeletedAt        *time.Time
 }
+
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 const messageCols = `m.id, m.room_id, m.author_id, m.reply_to_message_id::text,
 	m.body, m.format::text, m.created_at, m.edited_at, m.deleted_at`
@@ -191,19 +194,24 @@ func (s *Store) MessageByID(ctx context.Context, id string) (MessageRow, error) 
 }
 
 // ListMessagesPage paginates newest-first by (created_at, id). before nil
-// means start from the newest message.
-func (s *Store) ListMessagesPage(ctx context.Context, roomID string, before *Cursor, limit int) ([]MessageRow, error) {
+// means start from the newest message. A non-empty search does a
+// case-insensitive substring match on body and skips tombstones
+// (ponytail: seq scan within one room; pg_trgm index if rooms get huge).
+func (s *Store) ListMessagesPage(ctx context.Context, roomID string, before *Cursor, search string, limit int) ([]MessageRow, error) {
 	const q = `SELECT ` + messageCols + `
 		FROM messages m
 		WHERE m.room_id = $1
 		  AND ($2::timestamptz IS NULL OR row(m.created_at, m.id) < ($2::timestamptz, $3::uuid))
+		  AND ($5 = '' OR (m.deleted_at IS NULL AND m.body ILIKE '%' || $5 || '%'))
 		ORDER BY m.created_at DESC, m.id DESC
 		LIMIT $4`
+	// escape LIKE metacharacters so the term matches literally
+	search = likeEscaper.Replace(search)
 	var args []any
 	if before == nil {
-		args = []any{roomID, nil, nil, limit}
+		args = []any{roomID, nil, nil, limit, search}
 	} else {
-		args = []any{roomID, &before.At, &before.ID, limit}
+		args = []any{roomID, &before.At, &before.ID, limit, search}
 	}
 	rows, err := s.Q.Query(ctx, q, args...)
 	if err != nil {

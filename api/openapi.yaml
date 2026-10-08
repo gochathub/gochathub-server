@@ -668,6 +668,13 @@ paths:
           name: before
           schema:
             type: string
+        - in: query
+          name: q
+          description: >-
+            Case-insensitive substring match on message body (deleted messages
+            excluded). Paginates with `before`/`next_cursor` like the plain list.
+          schema:
+            type: string
       responses:
         "200":
           description: Messages

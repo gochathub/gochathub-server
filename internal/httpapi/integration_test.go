@@ -591,6 +591,34 @@ func TestCursorPagination(t *testing.T) {
 	}
 }
 
+// TestMessageSearch: q is a literal, case-insensitive substring; LIKE wildcards don't leak.
+func TestMessageSearch(t *testing.T) {
+	url := testURL(t)
+	ts, svc := newServer(t, url, nil)
+	seedUsers(t, svc, "salice")
+	base := &client{t: t, b: ts.URL}
+	alice := base.forUser(svc, "salice")
+
+	room := alice.do("POST", "/api/v1/rooms", map[string]any{"type": "public", "name": "searchy"}, 201)
+	roomID := alice.str(room, "id")
+	for _, b := range []string{"Invoice for the change", "lunch?", "100% done", "another invoice"} {
+		alice.do("POST", "/api/v1/rooms/"+roomID+"/messages", map[string]any{"body": b}, 201)
+	}
+	count := func(q string) int {
+		page := alice.do("GET", "/api/v1/rooms/"+roomID+"/messages?q="+q, nil, 200)
+		return len(page["items"].([]any))
+	}
+	if n := count("INVOICE"); n != 2 {
+		t.Fatalf("invoice: got %d, want 2", n)
+	}
+	if n := count("%25"); n != 1 { // literal %, not wildcard
+		t.Fatalf("percent: got %d, want 1", n)
+	}
+	if n := count("_"); n != 0 {
+		t.Fatalf("underscore: got %d, want 0", n)
+	}
+}
+
 // TestUploadFlow: create session → object "lands" → complete → readable → authz.
 func TestUploadFlow(t *testing.T) {
 	url := testURL(t)
