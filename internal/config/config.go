@@ -31,6 +31,10 @@ type Config struct {
 	MaxUpload    int64
 	AllowUploads bool
 
+	// S3PublicEndpoint is the browser-visible URL presigned links are signed
+	// for (behind a TLS proxy); empty = same as S3Endpoint.
+	S3PublicEndpoint string
+
 	// VAPID keys for Web Push (RFC 8292). If empty the server generates a
 	// key pair on first boot and persists it in the database (app_config).
 	VAPIDPrivateKey string
@@ -94,6 +98,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	str(&c.S3Endpoint, "S3_ENDPOINT")
+	str(&c.S3PublicEndpoint, "S3_PUBLIC_ENDPOINT")
 	str(&c.S3Region, "S3_REGION")
 	str(&c.S3Bucket, "S3_BUCKET")
 	str(&c.S3AccessKey, "S3_ACCESS_KEY")

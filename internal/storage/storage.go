@@ -16,21 +16,34 @@ import (
 
 // S3 is the minio-backed implementation.
 type S3 struct {
-	client   *minio.Client
-	bucket   string
-	urlTTL   time.Duration
-	endpoint string // for SSRF-safe object URL checks (not used for calls)
+	client    *minio.Client // server-side calls (internal endpoint)
+	presigner *minio.Client // signs browser-facing URLs (public endpoint)
+	bucket    string
+	urlTTL    time.Duration
+	endpoint  string // for SSRF-safe object URL checks (not used for calls)
 }
 
-// NewS3 connects and ensures the bucket exists.
-func NewS3(ctx context.Context, endpoint, region, bucket, accessKey, secretKey string, useTLS bool) (*S3, error) {
-	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure: useTLS,
-		Region: region,
-	})
+// NewS3 connects and ensures the bucket exists. endpoint is where this server
+// reaches the store. publicEndpoint, when set, is the browser-visible URL
+// presigned links are signed for (signatures are host-bound), e.g. an
+// https:// host behind a TLS proxy; empty means the same as endpoint.
+func NewS3(ctx context.Context, endpoint, publicEndpoint, region, bucket, accessKey, secretKey string, useTLS bool) (*S3, error) {
+	creds := credentials.NewStaticV4(accessKey, secretKey, "")
+	client, err := minio.New(endpoint, &minio.Options{Creds: creds, Secure: useTLS, Region: region})
 	if err != nil {
 		return nil, fmt.Errorf("minio client: %w", err)
+	}
+	presigner := client
+	if publicEndpoint != "" {
+		host, secure := publicEndpoint, useTLS
+		if i := strings.Index(publicEndpoint, "://"); i > 0 {
+			host, secure = publicEndpoint[i+3:], strings.EqualFold(publicEndpoint[:i], "https")
+		}
+		// the region is set, so presigning never contacts the public host
+		presigner, err = minio.New(host, &minio.Options{Creds: creds, Secure: secure, Region: region})
+		if err != nil {
+			return nil, fmt.Errorf("minio presign client: %w", err)
+		}
 	}
 	exists, err := client.BucketExists(ctx, bucket)
 	if err != nil {
@@ -44,12 +57,12 @@ func NewS3(ctx context.Context, endpoint, region, bucket, accessKey, secretKey s
 			}
 		}
 	}
-	return &S3{client: client, bucket: bucket, urlTTL: 15 * time.Minute, endpoint: endpoint}, nil
+	return &S3{client: client, presigner: presigner, bucket: bucket, urlTTL: 15 * time.Minute, endpoint: endpoint}, nil
 }
 
 func (s *S3) PresignPut(_ context.Context, key, mimeType string, size int64) (string, error) {
 	opts := minio.PutObjectOptions{ContentType: mimeType}
-	u, err := s.client.PresignedPutObject(context.Background(), s.bucket, key, s.urlTTL)
+	u, err := s.presigner.PresignedPutObject(context.Background(), s.bucket, key, s.urlTTL)
 	if err != nil {
 		return "", err
 	}
@@ -69,7 +82,7 @@ func (s *S3) PutObject(ctx context.Context, key, mimeType string, size int64, r 
 }
 
 func (s *S3) PresignGet(_ context.Context, key string) (string, error) {
-	u, err := s.client.PresignedGetObject(context.Background(), s.bucket, key, s.urlTTL, nil)
+	u, err := s.presigner.PresignedGetObject(context.Background(), s.bucket, key, s.urlTTL, nil)
 	if err != nil {
 		return "", err
 	}

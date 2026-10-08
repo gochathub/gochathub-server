@@ -78,7 +78,7 @@ func storageFor(ctx context.Context, cfg *config.Config) (service.Storage, error
 	if cfg.S3Endpoint == "" {
 		return storage.Disabled{}, nil
 	}
-	s3, err := storage.NewS3(ctx, cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseTLS)
+	s3, err := storage.NewS3(ctx, cfg.S3Endpoint, cfg.S3PublicEndpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseTLS)
 	if err != nil {
 		return nil, fmt.Errorf("attach storage: %w", err)
 	}

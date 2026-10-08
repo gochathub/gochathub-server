@@ -315,7 +315,7 @@ func rcmigrateCmd() *cobra.Command {
 			defer closeFn()
 			var stg *storage.S3
 			if b.cfg.S3Endpoint != "" {
-				stg, err = storage.NewS3(cmd.Context(), b.cfg.S3Endpoint, b.cfg.S3Region, b.cfg.S3Bucket, b.cfg.S3AccessKey, b.cfg.S3SecretKey, b.cfg.S3UseTLS)
+				stg, err = storage.NewS3(cmd.Context(), b.cfg.S3Endpoint, b.cfg.S3PublicEndpoint, b.cfg.S3Region, b.cfg.S3Bucket, b.cfg.S3AccessKey, b.cfg.S3SecretKey, b.cfg.S3UseTLS)
 				if err != nil {
 					return fmt.Errorf("s3: %w", err)
 				}

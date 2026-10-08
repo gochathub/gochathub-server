@@ -91,6 +91,7 @@ See [`docs/CLI.md`](docs/CLI.md) for the full reference.
 | `S3_ENDPOINT` `S3_BUCKET` `S3_ACCESS_KEY` `S3_SECRET_KEY` | (empty) | Object storage for attachments; without them uploads are rejected |
 | `TURNSTILE_SECRET` / `TURNSTILE_HOSTNAME` | (empty) | Cloudflare Turnstile on `POST /auth/login`; unset = off. Hostname optionally pins the widget's site |
 | `S3_REGION` / `S3_USE_TLS` | `us-east-1` / `true` | S3 connection |
+| `S3_PUBLIC_ENDPOINT` | (empty) | Browser-visible URL (`https://host`) presigned links are signed for; `S3_ENDPOINT` stays the address this server uses. Empty = same as `S3_ENDPOINT` |
 | `MAX_UPLOAD_BYTES` | `26214400` | Per-attachment limit |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (empty) | Generated + persisted in DB on first boot when unset |
 | `VAPID_SUBSCRIBER` | `https://chatserver.invalid` | VAPID `sub` claim |
