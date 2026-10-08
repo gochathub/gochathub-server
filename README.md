@@ -101,7 +101,7 @@ See [`docs/CLI.md`](docs/CLI.md) for the full reference.
 ## Clients
 
 - Web: [github.com/gochathub/gochathub-webui](https://github.com/gochathub/gochathub-webui) (Avian fork)
-- Android: [github.com/gochathub/gochathub-androidclient](https://github.com/gochathub/gochathub-androidclient) (CometChat UI Kit fork, UnifiedPush)
+- Android: [github.com/gochathub/gochathub-android-client](https://github.com/gochathub/gochathub-android-client) (CometChat UI Kit fork, UnifiedPush)
 
 The server is the contract authority for both.
 
