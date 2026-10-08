@@ -167,6 +167,48 @@ func (a *API) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+// --- personal API tokens (web profile mints, mobile signs in with it) ---
+
+func (a *API) handleMintToken(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	raw, t, err := a.svc.Users.MintAPIToken(r.Context(), p, in.Name)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 201, map[string]any{"id": t.ID, "name": t.Name, "token": raw})
+}
+
+func (a *API) handleListTokens(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	rows, err := a.svc.Users.ListAPITokens(r.Context(), p)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, t := range rows {
+		out = append(out, map[string]any{"id": t.ID, "name": t.Name, "created_at": t.CreatedAt, "last_used_at": t.LastUsedAt})
+	}
+	writeJSON(w, 200, out)
+}
+
+func (a *API) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	if err := a.svc.Users.RevokeOwnAPIToken(r.Context(), p, r.PathValue("tokenId")); err != nil {
+		a.mapError(w, err)
+		return
+	}
+	w.WriteHeader(204)
+}
+
 // sessionCookie builds the ADR-015 cookie.
 func (a *API) sessionCookie(token string, r *http.Request) *http.Cookie {
 	c := &http.Cookie{

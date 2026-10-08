@@ -342,6 +342,74 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /users/me/tokens:
+    post:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: createApiToken
+      description: >
+        Mint a personal API token (never expires; revoke it to end it). The
+        raw `token` is returned once. It works as a bearer on every endpoint
+        and the WebSocket, and skips password, Turnstile and 2FA, so treat it
+        like a password. Sessions only: a token cannot mint tokens (403).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApiTokenRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: The caller authenticated with an API token (`forbidden`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: listApiTokens
+      description: The caller's live (not revoked) tokens. Secrets are never returned.
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/me/tokens/{tokenId}:
+    delete:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: revokeApiToken
+      parameters:
+        - in: path
+          name: tokenId
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /users/search:
     get:
       tags: [users]
@@ -1198,6 +1266,42 @@ components:
           type: array
           items:
             type: string
+
+    CreateApiTokenRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          description: Label shown in the token list (default `mobile`).
+
+    ApiTokenCreated:
+      type: object
+      required: [id, name, token]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        token:
+          type: string
+          description: The raw token; shown once.
+
+    ApiToken:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
 
     AuthResponse:
       description: >

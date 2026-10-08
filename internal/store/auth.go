@@ -128,10 +128,17 @@ func (s *Store) ListAPITokens(ctx context.Context, userID string) ([]APITokenRow
 	return out, rows.Err()
 }
 
-// RevokeAPIToken revokes only the caller's own token.
+// RevokeAPIToken revokes only the caller's own token; ErrNotFound when it is
+// someone else's, unknown, or already revoked.
 func (s *Store) RevokeAPIToken(ctx context.Context, userID, tokenID string) error {
-	_, err := s.Q.Exec(ctx, `UPDATE api_tokens SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`, tokenID, userID)
-	return err
+	tag, err := s.Q.Exec(ctx, `UPDATE api_tokens SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`, tokenID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // RevokeAPITokenByID revokes by token id (CLI path).

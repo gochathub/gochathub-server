@@ -307,18 +307,59 @@ func (u *UserService) CreateAPIToken(ctx context.Context, username, name string)
 	if err != nil {
 		return "", ErrNotFound
 	}
+	raw, _, err := u.issueAPIToken(ctx, row.ID, "", name)
+	return raw, err
+}
+
+func (u *UserService) issueAPIToken(ctx context.Context, userID, actorID, name string) (string, store.APITokenRow, error) {
 	raw := id.NewToken()
-	t := &store.APITokenRow{
-		ID:        id.NewID(),
-		UserID:    row.ID,
-		Name:      name,
-		TokenHash: id.HashToken(raw),
+	t := store.APITokenRow{ID: id.NewID(), UserID: userID, Name: name, TokenHash: id.HashToken(raw)}
+	if err := u.App.Store.CreateAPIToken(ctx, &t); err != nil {
+		return "", t, fmt.Errorf("create token: %w", err)
 	}
-	if err := u.App.Store.CreateAPIToken(ctx, t); err != nil {
-		return "", fmt.Errorf("create token: %w", err)
+	_ = u.App.Store.Audit(ctx, actorID, "token.create", "api_token", t.ID, []byte(`{}`), nil)
+	return raw, t, nil
+}
+
+// MintAPIToken issues a token for the signed-in user (web profile → mobile QR).
+// Sessions only: a token that could mint tokens would make a leak self-renewing.
+// ponytail: no expiry (decided); add expires_at here if that changes.
+func (u *UserService) MintAPIToken(ctx context.Context, p Principal, name string) (string, store.APITokenRow, error) {
+	if p.Kind != "session" {
+		return "", store.APITokenRow{}, ErrForbidden
 	}
-	_ = u.App.Store.Audit(ctx, "", "token.create", "api_token", t.ID, []byte(`{}`), nil)
-	return raw, nil
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "mobile"
+	}
+	if len(name) > 100 {
+		return "", store.APITokenRow{}, bad("name too long")
+	}
+	return u.issueAPIToken(ctx, p.UserID, p.UserID, name)
+}
+
+// ListAPITokens returns the caller's live tokens (metadata only, never the secret).
+func (u *UserService) ListAPITokens(ctx context.Context, p Principal) ([]store.APITokenRow, error) {
+	all, err := u.App.Store.ListAPITokens(ctx, p.UserID)
+	if err != nil {
+		return nil, err
+	}
+	live := all[:0]
+	for _, t := range all {
+		if t.RevokedAt == nil {
+			live = append(live, t)
+		}
+	}
+	return live, nil
+}
+
+// RevokeOwnAPIToken revokes one of the caller's tokens.
+func (u *UserService) RevokeOwnAPIToken(ctx context.Context, p Principal, tokenID string) error {
+	err := u.App.Store.RevokeAPIToken(ctx, p.UserID, tokenID)
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrNotFound
+	}
+	return err
 }
 
 // RevokeAPIToken revokes a token by id (CLI path).
