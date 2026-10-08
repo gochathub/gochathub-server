@@ -114,7 +114,9 @@ func (ds *DeviceService) Renew(ctx context.Context, p Principal, deviceID string
 	if _, err := ds.App.Store.DeviceForUser(ctx, deviceID, p.UserID); err != nil {
 		return ErrNotFound
 	}
-	old, err := ds.App.Store.ValidEndpointForDevice(ctx, deviceID, p.UserID)
+	// newest live endpoint, validated or not: an unvalidated one must be
+	// replaced too, not stacked beside the new row
+	old, err := ds.App.Store.PushEndpointForDeviceByDevice(ctx, deviceID, p.UserID)
 	if errors.Is(err, store.ErrNotFound) {
 		return ds.registerEndpointForDevice(ctx, p, deviceID, in)
 	}

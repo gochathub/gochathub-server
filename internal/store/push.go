@@ -107,6 +107,13 @@ func (s *Store) ReplacePushEndpoint(ctx context.Context, oldID string, e *PushEn
 			`UPDATE push_endpoints SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, oldID); err != nil {
 			return err
 		}
+		// endpoint is globally UNIQUE: a renewal re-sending the same endpoint
+		// would collide with the row just revoked (or an older revoked one)
+		if _, err := tx.Q.Exec(ctx,
+			`DELETE FROM push_endpoints WHERE endpoint = $1 AND device_id = $2 AND revoked_at IS NOT NULL`,
+			e.Endpoint, e.DeviceID); err != nil {
+			return err
+		}
 		return tx.CreatePushEndpoint(ctx, e)
 	})
 }

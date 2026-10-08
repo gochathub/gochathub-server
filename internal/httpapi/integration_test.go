@@ -707,6 +707,40 @@ func TestDevicesPushRegistration(t *testing.T) {
 	alice.do("DELETE", "/api/v1/devices/"+deviceID, nil, 204)
 }
 
+// TestDevicesRenew: clients re-send the same endpoint on every app start;
+// renewal must accept it for unvalidated and validated registrations.
+func TestDevicesRenew(t *testing.T) {
+	url := testURL(t)
+	ts, svc := newServer(t, url, nil)
+	seedUsers(t, svc, "renalice")
+	alice := (&client{t: t, b: ts.URL}).forUser(svc, "renalice")
+
+	push := func(endpoint string) map[string]any {
+		return map[string]any{"endpoint": endpoint, "public_key": "pk", "auth_secret": "au"}
+	}
+	reg := alice.do("POST", "/api/v1/devices", map[string]any{
+		"platform": "android", "client_name": "c",
+		"push_registration": push("https://ntfy.example/up/renew"),
+	}, 201)
+	deviceID := alice.str(reg, "device_id")
+
+	// unvalidated registration, same endpoint
+	alice.do("PATCH", "/api/v1/devices/"+deviceID, push("https://ntfy.example/up/renew"), 204)
+
+	// validated registration: same endpoint, then a new one
+	ctx := context.Background()
+	userID := alice.str(alice.do("GET", "/api/v1/users/me", nil, 200), "id")
+	e, err := svc.Store.PushEndpointForDeviceByDevice(ctx, deviceID, userID)
+	if err != nil {
+		t.Fatalf("endpoint lookup: %v", err)
+	}
+	if err := svc.Store.ValidatePushEndpoint(ctx, e.ID); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	alice.do("PATCH", "/api/v1/devices/"+deviceID, push("https://ntfy.example/up/renew"), 204)
+	alice.do("PATCH", "/api/v1/devices/"+deviceID, push("https://ntfy.example/up/renew2"), 204)
+}
+
 // TestReceiptsPreferenceGating: read_receipts=false removes the reader from
 // sender-visible aggregation (ADR-009 × ADR-013).
 func TestReceiptsPreferenceGating(t *testing.T) {
