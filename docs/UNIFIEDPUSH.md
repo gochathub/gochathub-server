@@ -11,7 +11,7 @@ Verified against official documentation on 2026-10-06:
 Items marked **[verify]** are not fully pinned down by those pages and must be
 confirmed against the referenced project at implementation time.
 
-**Live verification (2026-10-06, ntfy.example.com):** all three
+**Live verification (2026-10-06, a self-hosted ntfy instance):** all three
 `[verify]` items were answered via live integration tests
 (`internal/push/live_test.go`, `internal/httpapi/integration_test.go`):
 
