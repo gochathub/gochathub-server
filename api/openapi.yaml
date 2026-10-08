@@ -84,6 +84,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "403":
+          description: Turnstile token missing or rejected (`captcha_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /auth/login/2fa:
     post:
@@ -1125,6 +1131,13 @@ components:
         password:
           type: string
           format: password
+        turnstile_token:
+          type: string
+          description: >
+            Cloudflare Turnstile response token. Required (single-use) when the
+            server has Turnstile enabled; ignored otherwise. A missing or
+            rejected token fails with 403 `captcha_failed` before credentials
+            are checked.
         token_request:
           type: boolean
           default: false

@@ -17,6 +17,8 @@ type AuthService struct {
 	App        *App
 	SessionTTL time.Duration
 	Now        func() time.Time // test clock for TOTP steps; nil = time.Now
+	// VerifyCaptcha gates password login (Turnstile); nil = no captcha.
+	VerifyCaptcha func(ctx context.Context, token string, ip *string) error
 }
 
 // Principal identifies an authenticated actor.

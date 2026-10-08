@@ -44,13 +44,24 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		// TokenRequest: non-browser clients (Android) take the session token
 		// in the body instead of only a cookie (ADR-015).
-		TokenRequest bool `json:"token_request"`
+		TokenRequest   bool   `json:"token_request"`
+		TurnstileToken string `json:"turnstile_token"`
 	}
 	if err := decodeJSON(r, &in); err != nil {
 		writeError(w, 400, "validation", "bad body")
 		return
 	}
 	ip := ipForAudit(r, a.trustProxy)
+	// before the password check, so bots spend Cloudflare's time, not argon2's
+	if verify := a.svc.Auth.VerifyCaptcha; verify != nil {
+		if err := verify(r.Context(), in.TurnstileToken, ip); err != nil {
+			if !errors.Is(err, service.ErrCaptcha) {
+				a.log.WarnContext(r.Context(), "turnstile verify", "err", err)
+			}
+			writeError(w, 403, "captcha_failed", "captcha verification failed")
+			return
+		}
+	}
 	token, user, err := a.svc.Auth.Login(r.Context(), in.Username, in.Password, r.UserAgent(), ip)
 	var tf *service.TwoFactorRequired
 	if errors.As(err, &tf) {

@@ -89,6 +89,7 @@ See [`docs/CLI.md`](docs/CLI.md) for the full reference.
 | `TRUST_PROXY` | `true` | Visitor IP from X-Forwarded-For (reverse proxy) |
 | `RATE_LIMIT_RPM` | `60` | Per-visitor burst/refill for capped routes |
 | `S3_ENDPOINT` `S3_BUCKET` `S3_ACCESS_KEY` `S3_SECRET_KEY` | (empty) | Object storage for attachments; without them uploads are rejected |
+| `TURNSTILE_SECRET` / `TURNSTILE_HOSTNAME` | (empty) | Cloudflare Turnstile on `POST /auth/login`; unset = off. Hostname optionally pins the widget's site |
 | `S3_REGION` / `S3_USE_TLS` | `us-east-1` / `true` | S3 connection |
 | `MAX_UPLOAD_BYTES` | `26214400` | Per-attachment limit |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (empty) | Generated + persisted in DB on first boot when unset |

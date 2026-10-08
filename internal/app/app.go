@@ -48,6 +48,9 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 		Sender:         sender,
 	}
 	WireServices(svc, log, cfg.SessionTTL)
+	if cfg.TurnstileSecret != "" {
+		svc.Auth.VerifyCaptcha = (&service.Turnstile{Secret: cfg.TurnstileSecret, Hostname: cfg.TurnstileHostname}).Verify
+	}
 
 	hub := ws.NewHub(log)
 	hub.App = svc

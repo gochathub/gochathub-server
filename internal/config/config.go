@@ -56,6 +56,10 @@ type Config struct {
 	// BaseOrigin is the deployment Origin for same-origin enforcement
 	// (ADR-015/016), e.g. https://chat.example.com. Empty disables checks.
 	BaseOrigin string
+
+	// Cloudflare Turnstile on password login. Empty secret = disabled.
+	TurnstileSecret   string
+	TurnstileHostname string // optional: pin widget hostname
 }
 
 func Load() (*Config, error) {
@@ -80,6 +84,8 @@ func Load() (*Config, error) {
 	str(&c.ListenAddr, "LISTEN_ADDR")
 	str(&c.LogLevel, "LOG_LEVEL")
 	str(&c.BaseOrigin, "ORIGIN")
+	str(&c.TurnstileSecret, "TURNSTILE_SECRET")
+	str(&c.TurnstileHostname, "TURNSTILE_HOSTNAME")
 	// typed helpers fail fast: a typo'd env var must not silently fall back
 	if err = boolVar(&c.CookieSecure, "COOKIE_SECURE", true); err != nil {
 		return nil, err
