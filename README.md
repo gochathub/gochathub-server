@@ -27,7 +27,8 @@ No PostgREST, Redis, Kafka, RabbitMQ, or microservices. PostgreSQL is authoritat
 - **Attachments** — presigned S3 upload sessions; the backend proxies authorization, never file bytes.
 - **Push notifications** — UnifiedPush (self-hosted ntfy) and Web Push (RFC 8291 encrypted payloads); only identifiers go out, never message content.
 - **Avatars** — uploaded through attachments with Gravatar fallback.
-- **Admin CLI** — users, rooms, and tokens managed from the same service layer as the HTTP API.
+- **Inbound webhooks** — Postmark inbound email (and Cloudflare Email Workers) post into a fixed room or DM as a bot user; see [Inbound webhooks](#inbound-webhooks).
+- **Admin CLI** — users, rooms, tokens, and webhooks managed from the same service layer as the HTTP API.
 
 ## Architecture
 
@@ -72,9 +73,44 @@ The server is now listening on `:8080`. The OpenAPI contract lives in [`api/open
 gochathub-server user create <username>          # and list | passwd | enable | disable | delete
 gochathub-server room create <name>              # and list | archive | members | invite
 gochathub-server token create <username>         # raw token printed once; and revoke
+gochathub-server webhook create --name N --room <id>   # URL printed once; and list | enable | disable | rotate | delete
 ```
 
 See [`docs/CLI.md`](docs/CLI.md) for the full reference.
+
+## Inbound webhooks
+
+`POST /hooks/{id}/{secret}` turns one inbound email into one chat message. It accepts the [Postmark inbound webhook](https://postmarkapp.com/developer/webhooks/inbound-webhook) JSON, so Postmark can call it directly and a Cloudflare Email Worker can post the same shape.
+
+```bash
+gochathub-server webhook create --name "Mail" --room <room-id>      # post into a room
+gochathub-server webhook create --name "Mail" --user alice --self   # DM to your own account
+```
+
+`create` prints the URL (`/hooks/<id>/<secret>`, prefixed with `ORIGIN` when set) exactly once. Paste it into Postmark under the inbound stream's webhook setting. A quick test:
+
+```bash
+curl -X POST "$URL" -H 'Content-Type: application/json' \
+  -d '{"MessageID":"t1","Subject":"Hello","FromFull":{"Name":"Ann","Email":"ann@example.com"},"TextBody":"hi"}'
+```
+
+How it behaves:
+
+- **Fixed target.** Each webhook posts into one room (or one bot↔user DM), chosen at creation. The payload never picks the recipient. Without `--self`, a `--user` target must allow private messages.
+- **Bot author.** Messages come from a per-webhook bot user (`role: "bot"`) that cannot sign in.
+- **Safe rendering.** Sender and subject are shown as inline code and the text (`StrippedTextReply`, else `TextBody`) in a code block. `HtmlBody` is ignored. `@mentions` in mail never notify anyone; normal push still follows each recipient's preferences.
+- **Attachments** are stored as bot-owned uploads (first 10, within `MAX_UPLOAD_BYTES`); one that cannot be stored is noted in the message instead of failing the mail.
+- **Retries and duplicates.** `MessageID` is the dedupe key. Responses follow Postmark's retry rules: `200` is final (including duplicates and spam drops), `403` stops retries, anything else is retried.
+- **Optional guards.** `--cidr` limits source addresses; `--max-spam N` drops mail whose `X-Spam-Score` exceeds `N`.
+- **Secret handling.** The secret is stored hashed, redacted from the server's logs, and replaced at any time with `webhook rotate` (the old URL stops working immediately).
+
+Deployment notes:
+
+- Your reverse proxy must forward `/hooks/*` to this server. A static-site or SPA fallback would answer `200` with HTML and Postmark would consider the mail delivered.
+- The secret is part of the URL path, so mask `/hooks/` in proxy and CDN access logs.
+- Bodies up to `WEBHOOK_MAX_BODY_BYTES` are accepted (attachments arrive as base64 JSON); raise the proxy's body limit to match.
+
+Full design, payload fields, and limits: [`docs/WEBHOOKS.md`](docs/WEBHOOKS.md) (ADR-020 to ADR-022).
 
 ## Configuration
 
@@ -93,6 +129,7 @@ See [`docs/CLI.md`](docs/CLI.md) for the full reference.
 | `S3_REGION` / `S3_USE_TLS` | `us-east-1` / `true` | S3 connection |
 | `S3_PUBLIC_ENDPOINT` | (empty) | Browser-visible URL (`https://host`) presigned links are signed for; `S3_ENDPOINT` stays the address this server uses. Empty = same as `S3_ENDPOINT` |
 | `MAX_UPLOAD_BYTES` | `26214400` | Per-attachment limit |
+| `WEBHOOK_MAX_BODY_BYTES` | `67108864` | Max size of one inbound webhook request (attachments arrive as base64 JSON) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | (empty) | Generated + persisted in DB on first boot when unset |
 | `VAPID_SUBSCRIBER` | `https://chatserver.invalid` | VAPID `sub` claim |
 | `PUSH_NTFY_QUERY` | `up` | Appends `?up=1` to push sends (ntfy UnifiedPush flag) |
@@ -116,6 +153,7 @@ The server is the contract authority for both.
 | [`docs/DATABASE.md`](docs/DATABASE.md) | Schema and migrations |
 | [`docs/WEBSOCKETS.md`](docs/WEBSOCKETS.md) | WebSocket protocol |
 | [`docs/CLI.md`](docs/CLI.md) | Admin CLI reference |
+| [`docs/WEBHOOKS.md`](docs/WEBHOOKS.md) | Inbound webhooks (Postmark, Cloudflare Email Workers) |
 | [`docs/PUSH.md`](docs/PUSH.md) / [`docs/UNIFIEDPUSH.md`](docs/UNIFIEDPUSH.md) | Push design and the verified UnifiedPush contract |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Architecture decision records (ADR-001…) |
 | [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) | Feature checklist and out-of-scope list |
