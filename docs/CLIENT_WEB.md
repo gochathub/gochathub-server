@@ -163,8 +163,9 @@ Direct-to-storage means the server never streams file bytes; honor
 - No CORS handling (single origin, ADR-016).
 - No signup, password reset, email verification UI (ADR-014).
 - No voice-call UI (ADR-012).
-- No local push-notification integrations for messages beyond WS + browser
-  Notification API with what WS already delivered.
+- No push beyond the server's own Web Push (`platform: web` device via
+  `/push/vapid` + `/devices`, shown by `src/sw.ts`) and the WS + browser
+  Notification API fallback. No FCM/APNs integration in the client.
 - No client-side business rules that the server already enforces
   (authorization, receipt aggregation, moderation).
 

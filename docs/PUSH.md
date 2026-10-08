@@ -86,6 +86,16 @@ Do not put sensitive full message content in the push payload unless there is a 
 
 The Android app should retrieve authoritative message data from the API.
 
+## Web client (PWA)
+
+The web UI registers as a `platform: web` device: it subscribes through the
+browser's PushManager with the key from `GET /push/vapid`, then posts the
+subscription to `POST /devices`. Delivery, payload and policy are identical to
+Android; browser endpoints (FCM/Mozilla autopush) are plain Web Push, so no
+gateway is involved. The service worker answers the validation ping by relaying
+the decrypted token to the page, which calls `/devices/{id}/validate`, and
+fetches the message with the session cookie to render the notification text.
+
 ## Important
 
 Do not make the Android application dependent on the ntfy application's UI or APIs.
