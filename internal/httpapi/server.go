@@ -27,6 +27,7 @@ type API struct {
 	loginRate  *limiter
 	trustProxy bool
 	cookieName string
+	hookSem    chan struct{} // bounds concurrent webhook ingests (large base64 bodies)
 }
 
 // loginRPM: dedicated per-IP bucket for password attempts; the shared global
@@ -44,6 +45,9 @@ func New(svc *service.App, hub *ws.Hub, log *slog.Logger, cfg *config.Config) *A
 		loginRate:  newLimiter(loginRPM),
 		trustProxy: cfg.TrustProxy,
 		cookieName: cookieName(cfg.CookieSecure),
+		// ponytail: fixed 2 slots bound memory at ~2 bodies in flight; make
+		// it configurable if inbound volume ever needs more
+		hookSem: make(chan struct{}, 2),
 	}
 	a.routes()
 	return a
@@ -146,6 +150,9 @@ func (a *API) routes() {
 	// websocket
 	mux.Handle("GET /api/v1/ws", a.chain(true, http.HandlerFunc(a.handleWS)))
 
+	// inbound webhooks: secret in the path, not versioned (third-party config)
+	mux.Handle("POST /hooks/{hookId}/{secret}", a.hookChain(http.HandlerFunc(a.handleHook)))
+
 	a.mux = mux
 }
 
@@ -157,6 +164,17 @@ func (a *API) chain(auth bool, h http.Handler) http.Handler {
 	}
 	h = a.withOrigin(h)
 	h = limitBody(1<<20, h) // JSON bodies are small; uploads are presigned
+	h = withSecurityHeaders(h)
+	h = withRequestID(h)
+	h = withLogging(a.log, h)
+	h = withRecover(a.log, h)
+	return h
+}
+
+// hookChain is chain() minus the session pieces: no Origin check (no cookies)
+// and no 1 MiB cap (handleHook caps after authenticating).
+func (a *API) hookChain(h http.Handler) http.Handler {
+	h = a.withRate(h)
 	h = withSecurityHeaders(h)
 	h = withRequestID(h)
 	h = withLogging(a.log, h)

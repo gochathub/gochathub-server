@@ -31,6 +31,13 @@ chat-server
     create
     revoke
 
+  webhook          (docs/WEBHOOKS.md)
+    create --name N (--room ID | --user USERNAME [--self]) [--cidr C]... [--max-spam S]
+    list
+    enable|disable <id>
+    rotate <id>
+    delete <id>
+
   rcmigrate
     --archive <rocketchat-backup.archive>
     --dry-run

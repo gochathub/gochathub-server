@@ -30,6 +30,9 @@ type Config struct {
 	S3UseTLS     bool
 	MaxUpload    int64
 	AllowUploads bool
+	// WebhookMaxBody caps one inbound webhook request (attachments ride as
+	// base64 JSON; Postmark allows 35 MB of attachments).
+	WebhookMaxBody int64
 
 	// S3PublicEndpoint is the browser-visible URL presigned links are signed
 	// for (behind a TLS proxy); empty = same as S3Endpoint.
@@ -75,6 +78,7 @@ func Load() (*Config, error) {
 		S3Region:        "us-east-1",
 		S3UseTLS:        true,
 		MaxUpload:       25 << 20,
+		WebhookMaxBody:  64 << 20,
 		AllowUploads:    true,
 		RateLimitRPM:    60,
 		VAPIDSubscriber: "https://chatserver.invalid",
@@ -109,6 +113,9 @@ func Load() (*Config, error) {
 	str(&c.NtfyQueryFlag, "PUSH_NTFY_QUERY")
 	c.PushAllowHosts = splitList("PUSH_ALLOW_HOSTS")
 	if err = sizeVar(&c.MaxUpload, "MAX_UPLOAD_BYTES"); err != nil {
+		return nil, err
+	}
+	if err = sizeVar(&c.WebhookMaxBody, "WEBHOOK_MAX_BODY_BYTES"); err != nil {
 		return nil, err
 	}
 	if err = boolVar(&c.AllowUploads, "ALLOW_UPLOADS", true); err != nil {

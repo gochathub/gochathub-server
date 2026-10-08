@@ -28,6 +28,9 @@ type MessageInput struct {
 	Format        string   `json:"format"`
 	ReplyToID     string   `json:"reply_to_message_id"`
 	AttachmentIDs []string `json:"attachment_ids"`
+	// SkipMentions keeps @names from resolving; set only by the webhook
+	// service (json:"-" so API callers cannot) — inbound mail must not ping users.
+	SkipMentions bool `json:"-"`
 }
 
 // Create validates, persists, seeds receipts, notifies WS, and requests push.
@@ -73,7 +76,10 @@ func (ms *MessageService) Create(ctx context.Context, p Principal, roomID string
 	if in.ReplyToID != "" {
 		m.ReplyToMessageID = &in.ReplyToID
 	}
-	mentionIDs, _ := mentionTargets(ctx, ms.App.Store, in.Body)
+	var mentionIDs []string
+	if !in.SkipMentions {
+		mentionIDs, _ = mentionTargets(ctx, ms.App.Store, in.Body)
+	}
 	err = ms.App.Store.WithTx(ctx, func(tx *store.Store) error {
 		if err := tx.InsertMessage(ctx, m); err != nil {
 			return err

@@ -81,6 +81,7 @@ func newServer(t *testing.T, u string, uploads service.Storage) (*httptest.Serve
 		CookieSecure:    false,
 		AllowUploads:    uploads != nil,
 		MaxUpload:       1 << 20,
+		WebhookMaxBody:  4 << 20,
 		VAPIDSubscriber: "mailto:t@t.invalid",
 		RateLimitRPM:    1000000,
 	}
@@ -127,6 +128,12 @@ func (f *fakeStorage) Put(key string, size int64) { f.objects[key] = size }
 func (f *fakeStorage) Stat(_ context.Context, key string) (int64, bool, string, error) {
 	sz, ok := f.objects[key]
 	return sz, ok, "", nil
+}
+
+func (f *fakeStorage) PutObject(_ context.Context, key, _ string, _ int64, r io.Reader) error {
+	n, err := io.Copy(io.Discard, r)
+	f.objects[key] = n
+	return err
 }
 
 func (f *fakeStorage) Delete(_ context.Context, key string) error {

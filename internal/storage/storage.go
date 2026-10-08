@@ -119,6 +119,9 @@ type Disabled struct{}
 func (Disabled) PresignPut(context.Context, string, string, int64) (string, error) {
 	return "", errors.New("object storage is not configured")
 }
+func (Disabled) PutObject(context.Context, string, string, int64, io.Reader) error {
+	return errors.New("object storage is not configured")
+}
 func (Disabled) PresignGet(context.Context, string) (string, error) {
 	return "", errors.New("object storage is not configured")
 }

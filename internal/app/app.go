@@ -72,6 +72,7 @@ func WireServices(app *service.App, log *slog.Logger, sessionTTL time.Duration) 
 	app.Invites = &service.InviteService{App: app}
 	app.Attachments = &service.AttachmentService{App: app}
 	app.Devices = &service.DeviceService{App: app}
+	app.Webhooks = &service.WebhookService{App: app}
 }
 
 func storageFor(ctx context.Context, cfg *config.Config) (service.Storage, error) {

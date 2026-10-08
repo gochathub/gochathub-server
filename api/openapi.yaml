@@ -20,6 +20,7 @@ tags:
   - name: messages
   - name: attachments
   - name: devices
+  - name: webhooks
   - name: health
 
 paths:
@@ -1095,6 +1096,91 @@ paths:
         ack, read; server events per the envelope list there. Not a REST
         resource; listed for contract completeness.
 
+  /hooks/{hookId}/{secret}:
+    servers:
+      - url: /
+        description: Unversioned, outside /api/v1 (third-party configured URL)
+    parameters:
+      - in: path
+        name: hookId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: secret
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [webhooks]
+      operationId: ingestWebhook
+      description: |
+        Inbound webhook (docs/WEBHOOKS.md, ADR-020..022). Posts one message
+        into the webhook's fixed room as its bot user. The secret in the path
+        is the credential (no bearer, no cookie) and is redacted from logs.
+        Body is the Postmark inbound JSON subset; unknown fields (including
+        HtmlBody) are ignored. Status codes follow Postmark's retry rules:
+        200 is final, 403 stops retries, anything else is retried.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InboundEmail"
+      responses:
+        "200":
+          description: |
+            Posted, already posted (duplicate MessageID), or dropped by the
+            spam gate.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message_id:
+                    type: string
+                  duplicate:
+                    type: boolean
+                  dropped:
+                    type: string
+                    enum: [spam]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: |
+            Unknown id, wrong secret, disabled webhook or source address
+            outside the allowlist (all indistinguishable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Target room is archived (Postmark retries until unarchived).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: Body exceeds WEBHOOK_MAX_BODY_BYTES.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Per-IP rate limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Ingest concurrency full; retry after Retry-After.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1160,6 +1246,52 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    InboundEmail:
+      type: object
+      description: Postmark inbound JSON subset (Cloudflare Email Worker posts the same shape).
+      properties:
+        MessageID:
+          type: string
+          maxLength: 512
+          description: Dedupe key per webhook; empty disables dedupe.
+        Subject:
+          type: string
+        TextBody:
+          type: string
+        StrippedTextReply:
+          type: string
+          description: Preferred over TextBody when present.
+        FromFull:
+          type: object
+          properties:
+            Email:
+              type: string
+            Name:
+              type: string
+        Headers:
+          type: array
+          description: Only X-Spam-Score is read.
+          items:
+            type: object
+            properties:
+              Name:
+                type: string
+              Value:
+                type: string
+        Attachments:
+          type: array
+          description: Stored as bot-owned attachments (first 10); failures are noted in the message body.
+          items:
+            type: object
+            properties:
+              Name:
+                type: string
+              ContentType:
+                type: string
+              Content:
+                type: string
+                description: Standard base64.
+
     Error:
       type: object
       required: [error]
@@ -1331,7 +1463,8 @@ components:
           type: string
         role:
           type: string
-          enum: [user, moderator, admin]
+          enum: [user, moderator, admin, bot]
+          description: "bot: authors webhook messages; cannot log in."
         email:
           type: string
           nullable: true

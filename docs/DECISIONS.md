@@ -128,3 +128,30 @@ Reason: `User` keeps a stable schema for generated clients (`last_seen_at` is a 
 - Archive parsing uses mongo-driver BSON decoding directly against the mongodump stream; no MongoDB instance is required at import time.
 
 Reason: correctness of idempotent re-runs beats inventing a migration-tracking schema; keeping untouched auth material in a sidecar avoids both loss (2FA must re-enroll otherwise) and schema speculation. The sidecar rows are removed with the user (CASCADE) and the table can be dropped once 2FA consumes the data.
+
+## ADR-020: Webhook messages are authored by a bot user; target is fixed per webhook
+
+Inbound webhooks (`docs/WEBHOOKS.md`) post as a dedicated bot user per webhook (`users.role = 'bot'`, unusable password hash, login rejected, no sessions/tokens), and the webhook row binds exactly one room. A user target is a bot-to-user DM room created when the webhook is created. The payload never selects the recipient.
+
+- `messages.author_id` is a user FK and membership is checked against the principal, so a real user row is required; impersonating the creating admin or a shared system user was rejected (provenance, per-webhook revocation).
+- `role 'bot'` instead of an `is_bot` column: no change to `userCols`/Scan lists, and clients can badge on the existing `role` field.
+- DM privacy: the target's `AllowPrivateMessages`/contact rules apply, except the CLI `--self` flag, which is an operator assertion that the target is the operator's own account (the CLI has no chat identity to verify). The check becomes real if webhook management is ever exposed over REST.
+- Webhook text never resolves `@mentions` (`MessageInput.SkipMentions`, `json:"-"`), so inbound mail cannot ping users; normal push is unchanged.
+
+Reason: a leaked secret can then only post into one room as an identifiable bot.
+
+## ADR-021: Webhook secret in the URL path, hashed, with log redaction
+
+`POST /hooks/{id}/{secret}`; secret from `id.NewToken()`, stored as `id.HashToken`, constant-time compare, optional CIDR allowlist, rotation via CLI with no overlap window. Postmark inbound has no signature and cannot set headers; the only options are credentials in the URL or an IP allowlist, and the path form serves both Postmark and the Worker with one scheme.
+
+- Accepted weakness: the secret appears in the request line, so app logging (`withLogging`, `withRecover`) must redact it and the reverse proxy/CDN must mask `/hooks/` paths. A header secret is the upgrade for sources that can set one.
+- All auth failures return the same 403 (it also stops Postmark retries).
+
+## ADR-022: Webhook attachments are ingested server-side as bot-owned attachments
+
+Email attachments arrive as base64 inside the JSON body and are stored through the existing attachment pipeline: `CreateUpload` (sanitizing, mime and size checks, server-generated key) then `Storage.PutObject` then `Complete`, all as the bot principal. `Storage` gains `PutObject` (already implemented on `S3`).
+
+- A bad or oversize attachment becomes a line in the message body, never a failed request, so mail is not lost.
+- Limits: 10 attachments per message (existing), `MAX_UPLOAD_BYTES` per file, `WEBHOOK_MAX_BODY_BYTES` per request, 2 concurrent ingests. Base64 JSON is held in memory about three times during decode; streaming decode is the upgrade path.
+- Rejected alternatives: dropping attachments (user chose full fidelity) and a second bypass storage path (duplicates the validation).
+- Message text is rendered inside a code fence with inline-code headers because `markdown.Validate` rejects raw HTML-like text (`<a@b.c>`) that every email contains.

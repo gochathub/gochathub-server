@@ -51,7 +51,7 @@ func newRootCmd() *cobra.Command {
 		Short:        "Self-hosted chat server: API, WebSocket, and CLI administration",
 		SilenceUsage: true,
 	}
-	root.AddCommand(serveCmd(), migrateCmd(), versionCmd(), userCmd(), roomCmd(), tokenCmd(), rcmigrateCmd())
+	root.AddCommand(serveCmd(), migrateCmd(), versionCmd(), userCmd(), roomCmd(), tokenCmd(), webhookCmd(), rcmigrateCmd())
 	return root
 }
 

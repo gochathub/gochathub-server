@@ -782,6 +782,51 @@ func (a *API) handleVapidKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"public_key": key})
 }
 
+// handleHook is the inbound webhook endpoint (docs/WEBHOOKS.md). Auth first,
+// so unauthenticated callers never make the server buffer a large body.
+// Statuses follow Postmark's retry rules: 200 done, 403 permanent, else retry.
+func (a *API) handleHook(w http.ResponseWriter, r *http.Request) {
+	hook, err := a.svc.Webhooks.Authenticate(r.Context(), r.PathValue("hookId"), r.PathValue("secret"), visitorIP(r, a.trustProxy))
+	if err != nil {
+		if errors.Is(err, service.ErrForbidden) {
+			writeError(w, 403, "forbidden", "not allowed")
+			return
+		}
+		a.mapError(w, err)
+		return
+	}
+	select {
+	case a.hookSem <- struct{}{}:
+		defer func() { <-a.hookSem }()
+	default:
+		w.Header().Set("Retry-After", "30")
+		writeError(w, 503, "busy", "try again later")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, a.cfg.WebhookMaxBody)
+	var in service.InboundEmail
+	if err := decodeJSON(r, &in); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, 413, "too_large", "body too large")
+			return
+		}
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	res, err := a.svc.Webhooks.Ingest(r.Context(), hook, in)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	switch {
+	case res.Dropped:
+		writeJSON(w, 200, map[string]any{"dropped": "spam"})
+	default:
+		writeJSON(w, 200, map[string]any{"message_id": res.MessageID, "duplicate": res.Duplicate})
+	}
+}
+
 // ipForAudit derives the audit IP from the request (header-aware when proxied).
 func ipForAudit(r *http.Request, trustProxy bool) *string {
 	ip := net.ParseIP(visitorIP(r, trustProxy))

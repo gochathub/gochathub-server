@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -56,6 +57,7 @@ type App struct {
 	Invites     *InviteService
 	Attachments *AttachmentService
 	Devices     *DeviceService
+	Webhooks    *WebhookService
 }
 
 // PushSender is the push boundary. Push is a delivery optimization; never
@@ -72,6 +74,8 @@ type PushSender interface {
 type Storage interface {
 	PresignPut(ctx context.Context, key, mimeType string, size int64) (string, error)
 	PresignGet(ctx context.Context, key string) (string, error)
+	// PutObject writes server-side (webhook attachment ingest).
+	PutObject(ctx context.Context, key, mimeType string, size int64, r io.Reader) error
 	Stat(ctx context.Context, key string) (size int64, exists bool, sha256Hex string, err error)
 	Delete(ctx context.Context, key string) error
 }

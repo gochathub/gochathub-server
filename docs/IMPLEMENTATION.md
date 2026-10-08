@@ -89,6 +89,14 @@ on-device Android distributor test, idempotency keys, rate-limit tests.
 - [x] Notification preferences wired end-to-end (`/users/me/notifications` → push policy → live delivery tested).
 - [ ] Android distributor on-device test (ntfy Android app + our connector path) — needs a device, not a server concern.
 
+## Inbound webhooks (docs/WEBHOOKS.md, ADR-020..022)
+
+- [x] `webhook` CLI (create/list/enable/disable/rotate/delete); bot user per webhook (`role 'bot'`), fixed room or bot↔user DM target.
+- [x] `POST /hooks/{id}/{secret}`: Postmark inbound JSON (Cloudflare Email Worker posts the same shape); secret hashed, CIDR allowlist, path redacted in logs.
+- [x] Mail rendered Validate-safe (inline code headers + fenced text); mentions suppressed; push unchanged.
+- [x] Attachments stored as bot-owned uploads; failures noted in the body; dedupe by source MessageID; optional spam gate.
+- [ ] Self-service webhook management over REST, per-address routing, HTML→text, per-webhook rate limit (see WEBHOOKS.md "Deferred").
+
 ## API
 
 - [x] OpenAPI contract synchronized with the implementation (`api/openapi.yaml`; enforced by `scripts/contract-check.py`, runs under `go test ./scripts/`).

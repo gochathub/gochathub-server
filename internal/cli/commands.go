@@ -546,6 +546,124 @@ func tokenCreate() *cobra.Command {
 	return cmd
 }
 
+// --- webhook commands (docs/WEBHOOKS.md) ---
+
+func webhookCmd() *cobra.Command {
+	c := &cobra.Command{Use: "webhook", Short: "Manage inbound webhooks"}
+	c.AddCommand(webhookCreate(), webhookList(), webhookEnable(), webhookDisable(), webhookRotate(), webhookDelete())
+	return c
+}
+
+// webhookApp boots the service graph and runs fn; every webhook command shares it.
+func webhookApp(cmd *cobra.Command, fn func(b *boot, app *service.App) error) error {
+	b, closeFn, err := bootstrap()
+	if err != nil {
+		return err
+	}
+	defer closeFn()
+	app, err := assembleFor(b)
+	if err != nil {
+		return err
+	}
+	return fn(b, app)
+}
+
+func webhookCreate() *cobra.Command {
+	var in service.WebhookCreateInput
+	var maxSpam float32
+	cmd := &cobra.Command{
+		Use: "create", Short: "Create a webhook (URL path with secret printed once)", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("max-spam") {
+				in.MaxSpam = &maxSpam
+			}
+			return webhookApp(cmd, func(b *boot, app *service.App) error {
+				res, err := app.Webhooks.Create(cmd.Context(), in)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s/hooks/%s/%s\n", b.cfg.BaseOrigin, res.ID, res.Secret) // printed exactly once; never logged
+				return nil
+			})
+		},
+	}
+	cmd.Flags().StringVar(&in.Name, "name", "", "webhook name (bot display name)")
+	cmd.Flags().StringVar(&in.RoomID, "room", "", "post into this room id")
+	cmd.Flags().StringVar(&in.Username, "user", "", "post into a DM with this username")
+	cmd.Flags().BoolVar(&in.Self, "self", false, "--user is your own account: skip the DM privacy gate")
+	cmd.Flags().StringSliceVar(&in.CIDRs, "cidr", nil, "allowed source CIDR (repeatable); default any")
+	cmd.Flags().Float32Var(&maxSpam, "max-spam", 0, "drop mail with X-Spam-Score above this")
+	_ = cmd.MarkFlagRequired("name")
+	return cmd
+}
+
+func webhookList() *cobra.Command {
+	return &cobra.Command{
+		Use: "list", Short: "List webhooks", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return webhookApp(cmd, func(_ *boot, app *service.App) error {
+				rows, err := app.Webhooks.List(cmd.Context())
+				if err != nil {
+					return err
+				}
+				for _, w := range rows {
+					state := "enabled"
+					if !w.Enabled {
+						state = "disabled"
+					}
+					last := "never"
+					if w.LastUsedAt != nil {
+						last = w.LastUsedAt.Format(time.RFC3339)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\troom=%s\tlast=%s\n", w.ID, w.Name, state, w.RoomID, last)
+				}
+				return nil
+			})
+		},
+	}
+}
+
+func webhookToggle(use, short string, enabled bool) *cobra.Command {
+	return &cobra.Command{
+		Use: use + " <webhook-id>", Short: short, Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return webhookApp(cmd, func(_ *boot, app *service.App) error {
+				return app.Webhooks.SetEnabled(cmd.Context(), args[0], enabled)
+			})
+		},
+	}
+}
+
+func webhookEnable() *cobra.Command  { return webhookToggle("enable", "Enable a webhook", true) }
+func webhookDisable() *cobra.Command { return webhookToggle("disable", "Disable a webhook", false) }
+
+func webhookRotate() *cobra.Command {
+	return &cobra.Command{
+		Use: "rotate <webhook-id>", Short: "Issue a new secret (old one dies immediately)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return webhookApp(cmd, func(b *boot, app *service.App) error {
+				secret, err := app.Webhooks.Rotate(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s/hooks/%s/%s\n", b.cfg.BaseOrigin, args[0], secret)
+				return nil
+			})
+		},
+	}
+}
+
+func webhookDelete() *cobra.Command {
+	return &cobra.Command{
+		Use: "delete <webhook-id>", Short: "Delete a webhook (bot is disabled; history stays)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return webhookApp(cmd, func(_ *boot, app *service.App) error {
+				return app.Webhooks.Delete(cmd.Context(), args[0])
+			})
+		},
+	}
+}
+
 func tokenRevoke() *cobra.Command {
 	return &cobra.Command{
 		Use: "revoke <token-id>", Short: "Revoke an API token", Args: cobra.ExactArgs(1),

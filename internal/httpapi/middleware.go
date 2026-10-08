@@ -36,7 +36,7 @@ func withRecover(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.ErrorContext(r.Context(), "panic recovered", "panic", rec, "path", r.URL.Path)
+				log.ErrorContext(r.Context(), "panic recovered", "panic", rec, "path", logPath(r))
 				writeError(w, 500, "internal_error", "internal error")
 			}
 		}()
@@ -58,6 +58,16 @@ func withRequestID(next http.Handler) http.Handler {
 	})
 }
 
+// logPath is the request path safe to log: a webhook secret rides in the URL
+// (ADR-021), so /hooks/{id}/{secret} logs as /hooks/{id}/***.
+func logPath(r *http.Request) string {
+	if rest, ok := strings.CutPrefix(r.URL.Path, "/hooks/"); ok {
+		hookID, _, _ := strings.Cut(rest, "/")
+		return "/hooks/" + hookID + "/***"
+	}
+	return r.URL.Path
+}
+
 // withLogging logs method/path/status/duration.
 func withLogging(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +75,7 @@ func withLogging(log *slog.Logger, next http.Handler) http.Handler {
 		sw := &statusWriter{ResponseWriter: w, status: 200}
 		next.ServeHTTP(sw, r)
 		log.InfoContext(r.Context(), "request",
-			"method", r.Method, "path", r.URL.Path, "status", sw.status,
+			"method", r.Method, "path", logPath(r), "status", sw.status,
 			"duration_ms", time.Since(start).Milliseconds())
 	})
 }
