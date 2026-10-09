@@ -261,6 +261,12 @@ func (u *UserService) PatchPreferences(ctx context.Context, p Principal, patch m
 			}
 		}
 	}
+	if patch.PrimaryColor != nil {
+		v := strings.ToLower(strings.TrimSpace(*patch.PrimaryColor))
+		if v != "" && !PrimaryColorSet[v] {
+			return model.Preferences{}, bad("primary_color: must be one of the supported swatches")
+		}
+	}
 	row, err := u.App.Store.UserByID(ctx, p.UserID)
 	if err != nil {
 		return model.Preferences{}, ErrNotFound
@@ -273,7 +279,8 @@ func (u *UserService) PatchPreferences(ctx context.Context, p Principal, patch m
 	if err := u.App.Store.SetUserPreferences(ctx, p.UserID, raw); err != nil {
 		return model.Preferences{}, fmt.Errorf("set preferences: %w", err)
 	}
-	return merged, nil
+	// The stored "" reset stays in the DB; the response reports the effective value.
+	return decodePrefs(raw), nil
 }
 
 // Search finds enabled users by username/display-name substring.

@@ -32,4 +32,8 @@ First tagged release. GoChatHub is a self-hosted chat server: REST/OpenAPI + Web
 
 ## [Unreleased]
 
+### Added
+
+- `primary_color` preference: accent swatch stored per user (15 supported hexes, lowercase-normalized; empty resets to the default `#4f46e5`); rejected otherwise. Clients derive shades from the hex.
+
 Changes since 1.0.0 land here as they accumulate.

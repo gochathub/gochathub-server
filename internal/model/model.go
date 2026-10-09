@@ -12,6 +12,9 @@ type Preferences struct {
 	// Client-side grammar check (UI only; the server just stores them).
 	SpellcheckEnabled bool     `json:"spellcheck_enabled"`
 	SpellcheckWords   []string `json:"spellcheck_words"`
+	// Accent color swatch (service.PrimaryColorSwatches); "" resolves to the
+	// default at decode. Clients derive everything else from the hex.
+	PrimaryColor string `json:"primary_color"`
 }
 
 // PreferencesPatch is the PATCH /users/me/preferences form (partial).
@@ -22,6 +25,7 @@ type PreferencesPatch struct {
 	AllowPrivateMessages *bool     `json:"allow_private_messages,omitempty"`
 	SpellcheckEnabled    *bool     `json:"spellcheck_enabled,omitempty"`
 	SpellcheckWords      *[]string `json:"spellcheck_words,omitempty"`
+	PrimaryColor         *string   `json:"primary_color,omitempty"` // "" = reset to default
 }
 
 // User is the API user. `email` is only populated on self payloads.

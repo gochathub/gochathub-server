@@ -546,6 +546,17 @@ func TestProfileVisibility(t *testing.T) {
 	}
 	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"spellcheck_words": []string{""}}, 400)
 
+	// primary_color: swatch round-trip (case-normalized), reset, bad value
+	pc := alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"primary_color": "#7C3AED"}, 200)
+	if pc["primary_color"] != "#7c3aed" {
+		t.Fatalf("primary_color patch: %v", pc)
+	}
+	pc = alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"primary_color": ""}, 200)
+	if pc["primary_color"] != "#4f46e5" {
+		t.Fatalf("primary_color reset: %v", pc)
+	}
+	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"primary_color": "#ff0000"}, 400)
+
 	// alice allows last_seen
 	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"last_seen_visible": true}, 200)
 	bobP = bob.do("GET", "/api/v1/users/"+aliceID, nil, 200)

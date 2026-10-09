@@ -1504,7 +1504,7 @@ components:
 
     Preferences:
       type: object
-      required: [last_seen_visible, read_receipts, allow_group_invites, allow_private_messages, spellcheck_enabled, spellcheck_words]
+      required: [last_seen_visible, read_receipts, allow_group_invites, allow_private_messages, spellcheck_enabled, spellcheck_words, primary_color]
       properties:
         last_seen_visible:
           type: boolean
@@ -1521,6 +1521,13 @@ components:
           type: array
           items: { type: string }
           description: Personal dictionary.
+        primary_color:
+          type: string
+          enum: ["#4f46e5", "#7c3aed", "#9333ea", "#db2777", "#dc2626", "#c2410c", "#b45309", "#4d7c0f", "#15803d", "#0f766e", "#0e7490", "#0369a1", "#2563eb", "#475569", "#27313a"]
+          description: >-
+            Accent color, one of the supported swatches. Clients derive
+            dark-mode shades and derived palette steps from this hex. The
+            default "#4f46e5" is returned when unset/reset.
 
     UpdatePreferencesRequest:
       description: Partial update; omitted fields keep current values.
@@ -1540,6 +1547,12 @@ components:
           type: array
           maxItems: 1000
           items: { type: string, minLength: 1, maxLength: 64 }
+        primary_color:
+          type: string
+          maxLength: 7
+          description: >-
+            Empty string resets to the default (#4f46e5); any other value must
+            be one of the supported swatch hexes (rejected with 400 validation).
       minProperties: 1
 
     AddContactRequest:

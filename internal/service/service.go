@@ -153,18 +153,40 @@ func lastSeenVisible(t *time.Time, prefs model.Preferences, self bool) *time.Tim
 	return nil
 }
 
+// Accent swatches stored server-side; api/openapi.yaml enumerates the same
+// set (docs/PRIMARY_COLOR_SETTINGS.md in the client repo). "" or a missing
+// key resolves to the default at decode. Clients derive shades from the hex.
+const PrimaryColorDefault = "#4f46e5"
+
+var PrimaryColorSwatches = []string{
+	"#4f46e5", "#7c3aed", "#9333ea", "#db2777", "#dc2626", "#c2410c",
+	"#b45309", "#4d7c0f", "#15803d", "#0f766e", "#0e7490", "#0369a1",
+	"#2563eb", "#475569", "#27313a",
+}
+
+var PrimaryColorSet = map[string]bool{}
+
+func init() {
+	for _, c := range PrimaryColorSwatches {
+		PrimaryColorSet[c] = true
+	}
+}
+
 // decodePrefs tolerates malformed stored JSONB. Missing keys default to
 // functionality-on / privacy-off: last_seen and read receipts hidden until
 // opted in; group invites and private messages allowed until opted out
 // (ADR-013).
 func decodePrefs(raw []byte) model.Preferences {
-	defaults := model.Preferences{AllowGroupInvites: true, AllowPrivateMessages: true, SpellcheckWords: []string{}}
+	defaults := model.Preferences{AllowGroupInvites: true, AllowPrivateMessages: true, SpellcheckWords: []string{}, PrimaryColor: PrimaryColorDefault}
 	p := defaults
 	if len(raw) == 0 || json.Unmarshal(raw, &p) != nil {
 		return defaults
 	}
 	if p.SpellcheckWords == nil {
 		p.SpellcheckWords = []string{}
+	}
+	if p.PrimaryColor == "" {
+		p.PrimaryColor = PrimaryColorDefault
 	}
 	return p
 }
@@ -196,6 +218,9 @@ func MergePreferences(stored []byte, patch model.PreferencesPatch) model.Prefere
 	}
 	if patch.SpellcheckWords != nil {
 		p.SpellcheckWords = *patch.SpellcheckWords
+	}
+	if patch.PrimaryColor != nil {
+		p.PrimaryColor = strings.ToLower(strings.TrimSpace(*patch.PrimaryColor)) // "" = reset
 	}
 	return p
 }
