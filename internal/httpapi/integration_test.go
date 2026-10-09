@@ -35,11 +35,7 @@ import (
 
 func testURL(t *testing.T) string {
 	t.Helper()
-	u := os.Getenv("TEST_DATABASE_URL")
-	if u == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
-	return u
+	return testutil.Database(t)
 }
 
 // testLogSink: real stderr when TEST_DEBUG=1, discard otherwise.
@@ -913,11 +909,12 @@ func roomIDs(list []any) map[string]bool {
 func TestLivePushValidationRoundTrip(t *testing.T) {
 	ntfyURL := strings.TrimSuffix(os.Getenv("TEST_NTFY_URL"), "/")
 	ntfyTok := os.Getenv("TEST_NTFY_TOKEN")
-	if testURL(t) == "" || ntfyURL == "" || ntfyTok == "" {
-		t.Skip("TEST_DATABASE_URL/TEST_NTFY_URL/TEST_NTFY_TOKEN not set")
+	url := testURL(t)
+	if ntfyURL == "" || ntfyTok == "" {
+		t.Skip("TEST_NTFY_URL/TEST_NTFY_TOKEN not set")
 	}
 	fake := newFakeStorage()
-	ts, svc := newServer(t, testURL(t), fake)
+	ts, svc := newServer(t, url, fake)
 	seedUsers(t, svc, "nalice")
 	base := &client{t: t, b: ts.URL}
 	alice := base.forUser(svc, "nalice")
@@ -964,11 +961,12 @@ func TestLivePushValidationRoundTrip(t *testing.T) {
 func TestLivePushMessageDelivery(t *testing.T) {
 	ntfyURL := strings.TrimSuffix(os.Getenv("TEST_NTFY_URL"), "/")
 	ntfyTok := os.Getenv("TEST_NTFY_TOKEN")
-	if testURL(t) == "" || ntfyURL == "" || ntfyTok == "" {
-		t.Skip("TEST_DATABASE_URL/TEST_NTFY_URL/TEST_NTFY_TOKEN not set")
+	url := testURL(t)
+	if ntfyURL == "" || ntfyTok == "" {
+		t.Skip("TEST_NTFY_URL/TEST_NTFY_TOKEN not set")
 	}
 	fake := newFakeStorage()
-	ts, svc := newServer(t, testURL(t), fake)
+	ts, svc := newServer(t, url, fake)
 	seedUsers(t, svc, "malice", "mbob")
 	base := &client{t: t, b: ts.URL}
 	alice := base.forUser(svc, "malice")

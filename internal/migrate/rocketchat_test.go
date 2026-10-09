@@ -21,6 +21,7 @@ import (
 	"github.com/gochathub/gochathub-server/internal/config"
 	"github.com/gochathub/gochathub-server/internal/pwd"
 	"github.com/gochathub/gochathub-server/internal/store"
+	"github.com/gochathub/gochathub-server/internal/testutil"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -162,10 +163,7 @@ func truncateAll(t *testing.T, st *store.Store) {
 
 func testStore(t *testing.T) (*store.Store, func()) {
 	t.Helper()
-	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
-	}
+	url := testutil.Database(t)
 	ctx := context.Background()
 	sqlDB, err := sql.Open("pgx", url)
 	if err != nil {
