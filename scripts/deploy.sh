@@ -39,14 +39,24 @@ trap 'echo "FAILED. Rollback: docker tag gochathub-server:prev gochathub-server:
 ts=$(date +%Y%m%d-%H%M%S)
 mkdir -p backups
 umask 077
-docker compose exec -T postgres pg_dump -U gochathub -Fc gochathub > "backups/pre-deploy-$SHA-$ts.dump"
+docker compose exec -T postgres pg_dump -U gochathub -Fc gochathub > "backups/pre-deploy-$SHA-$ts.dump" </dev/null
 echo "backup: backups/pre-deploy-$SHA-$ts.dump"
 
 docker tag gochathub-server:prod gochathub-server:prev
 docker tag gochathub-server:"$SHA" gochathub-server:prod
 
-docker compose run --rm server migrate
-docker compose up -d server
+# ponytail: -T + </dev/null on every compose run/exec — a bare compose run
+# forwards ssh stdin into the container and eats what's left of this script.
+docker compose run --rm -T server migrate </dev/null
+docker compose up -d server </dev/null
+
+docker image inspect --format '{{.Id}}' gochathub-server:prod | grep -qF "$(docker image inspect --format '{{.Id}}' gochathub-server:"$SHA")" || {
+  echo "::error::prod tag does not point at the new image; retag failed"
+  exit 1
+}
+started=$(docker compose ps --format '{{.Image}} {{.Status}}' server)
+case "$started" in *"gochathub-server:prod Up"*) ;; *) echo "::error::server not running new image: $started"; exit 1;; esac
+echo "remote done: $started"
 EOF
 
 echo "4/4 verify"
