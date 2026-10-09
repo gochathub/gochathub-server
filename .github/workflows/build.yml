@@ -1,0 +1,37 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gochathub
+          POSTGRES_PASSWORD: chat
+          POSTGRES_DB: chat_test
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - name: Unit + integration tests
+        env:
+          TEST_DATABASE_URL: postgres://gochathub:chat@127.0.0.1:5435/chat_test?sslmode=disable
+        run: go test ./...
+      # ntfy live tests self-skip unless TEST_NTFY_* secrets are configured later.
