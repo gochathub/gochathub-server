@@ -103,7 +103,7 @@ func newFakeRC(t *testing.T, rcUser, uname string) *fakeRC {
 				out = append(out, s)
 			}
 			f.mu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "subscriptions": out})
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "update": out, "remove": []rcSub{}}) // real servers: update, never subscriptions
 			return
 		}
 		var tms rcDate
@@ -128,6 +128,7 @@ func newFakeRC(t *testing.T, rcUser, uname string) *fakeRC {
 		mux.HandleFunc("GET /api/v1/"+name, rcHistory(f, "d"))
 	}
 	mux.HandleFunc("GET /api/v1/groups.history", rcHistory(f, "p"))
+	mux.HandleFunc("GET /api/v1/channels.history", rcHistory(f, "c"))
 
 	mux.HandleFunc("POST /api/v1/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -635,4 +636,44 @@ func mustRooms(t *testing.T, svc *service.App, p service.Principal) []model.Room
 		t.Fatalf("rooms: %v", err)
 	}
 	return rooms
+}
+
+// TestChannelMirroredPrivately: public RC channels (t=c) are mirrored, but as
+// owner-only private rooms; history comes from channels.history.
+func TestChannelMirroredPrivately(t *testing.T) {
+	st, closeDB := testStore(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	f := newFakeRC(t, "rcUserIdOwner", "rcowner")
+	svc, b := bootBridge(t, st, f.srv.URL)
+	alice, err := svc.Users.CreateUser(ctx, "alice", "Alice", "alice@test.invalid", "pw-alice", "user")
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	p := service.Principal{UserID: alice.ID, Kind: "session"}
+
+	f.registerSub("ridChan", "c", "general")
+	f.addMsg("ridChan", "welcome to general", "rcUserIdBob", "bober", "")
+
+	if _, err := b.Link(ctx, p, service.LinkRequest{BaseURL: f.srv.URL, RCUserID: f.uid, Token: testPAT}); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rooms, _ := svc.Rooms.List(ctx, p)
+		if len(rooms) == 1 {
+			r := rooms[0]
+			if r.Source != store.SrcRocketChat || r.Type != model.RoomPrivate || r.Name == nil || *r.Name != "general" {
+				t.Fatalf("channel room: %+v", r)
+			}
+			if page, _ := svc.Messages.List(ctx, p, r.ID, "", "", 50); len(page.Items) == 1 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("channel not mirrored: rooms=%d", len(rooms))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }

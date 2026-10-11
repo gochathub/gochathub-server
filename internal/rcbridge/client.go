@@ -201,10 +201,9 @@ func (b *Bridge) listSubs(ctx context.Context, t target, since *time.Time) ([]rc
 			continue
 		}
 		b.remember("subs", t.base, candidate)
-		if since == nil {
-			return r.Subscriptions, nil, nil
-		}
-		return r.Update, r.Remove, nil
+		// current servers answer {update, remove} with or without updatedSince;
+		// the legacy full list used "subscriptions"
+		return append(r.Subscriptions, r.Update...), r.Remove, nil
 	}
 	return nil, nil, errors.New("rc: no working subscriptions endpoint")
 }
@@ -232,8 +231,11 @@ func (b *Bridge) learned(kind, base string, candidates ...string) []string {
 // working one is remembered. groups.history is stable across versions.
 func (b *Bridge) history(ctx context.Context, t target, rid, typ string, oldest *time.Time) ([]rcMsg, error) {
 	candidates := []string{"groups.history"}
-	if typ == "direct" {
+	switch typ { // typ is the RC subscription type
+	case "d":
 		candidates = b.learned("dm", t.base, "dm.history", "im.history")
+	case "c":
+		candidates = []string{"channels.history"}
 	}
 	latest := time.Now().UTC()
 	var out []rcMsg
@@ -272,7 +274,7 @@ func (b *Bridge) history(ctx context.Context, t target, rid, typ string, oldest 
 		if err := json.Unmarshal(body, &h); err != nil || !h.Success {
 			return nil, fmt.Errorf("rc history %s: bad payload", rid)
 		}
-		if typ == "direct" {
+		if typ == "d" {
 			b.remember("dm", t.base, used)
 		}
 		out = append(out, h.Messages...)

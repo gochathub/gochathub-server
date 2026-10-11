@@ -228,7 +228,7 @@ func (b *Bridge) syncUser(ctx context.Context, l store.RCLink) error {
 		if s.UpdatedAt.Time.After(maxUpd) {
 			maxUpd = s.UpdatedAt.Time
 		}
-		if s.T != "d" && s.T != "p" { // channels (c), livechat (l): out of scope
+		if s.T != "d" && s.T != "p" && s.T != "c" { // livechat (l): out of scope
 			continue
 		}
 		dirty = append(dirty, s)
@@ -264,7 +264,7 @@ func (b *Bridge) syncRoom(ctx context.Context, l store.RCLink, t target, s rcSub
 	if err != nil {
 		return err
 	}
-	return b.pullRoom(ctx, l, t, room, room.SourceSyncedAt, fresh)
+	return b.pullRoom(ctx, l, t, room, s.T, room.SourceSyncedAt, fresh)
 }
 
 // ensureRoom maps the subscription to this owner's local room (ids derive from
@@ -284,7 +284,7 @@ func (b *Bridge) ensureRoom(ctx context.Context, l store.RCLink, s rcSub) (store
 		CreatedBy: l.UserID,
 		Name:      &name,
 	}
-	if s.T == "p" {
+	if s.T == "p" || s.T == "c" { // channels too: owner-only private mirror, never a public local room
 		room.Type = "private"
 	}
 	fresh, err := b.App.Store.UpsertRCRoom(ctx, &room, s.TS.Time)
@@ -300,8 +300,8 @@ func (b *Bridge) ensureRoom(ctx context.Context, l store.RCLink, s rcSub) (store
 // pullRoom fetches messages (oldest, latest] newest-first and inserts them.
 // fresh also stamps the link owner's receipts read so a fresh link opens with
 // zero noise; later deliveries stay unread until read here.
-func (b *Bridge) pullRoom(ctx context.Context, l store.RCLink, t target, room store.RoomRow, oldest *time.Time, fresh bool) error {
-	msgs, err := b.history(ctx, t, room.SourceRID, room.Type, oldest)
+func (b *Bridge) pullRoom(ctx context.Context, l store.RCLink, t target, room store.RoomRow, rcType string, oldest *time.Time, fresh bool) error {
+	msgs, err := b.history(ctx, t, room.SourceRID, rcType, oldest)
 	if err != nil {
 		return err
 	}
