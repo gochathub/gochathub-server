@@ -31,6 +31,7 @@ on-device Android distributor test, idempotency keys, rate-limit tests.
 - [x] Authorization primitives (membership/role checks, visibility rules).
 - [x] CLI user management (create/list/passwd/enable/disable/delete).
 - [x] Accounts are CLI-managed only — no self-registration/password reset/email (ADR-014).
+- [x] Email signup invites (ADR-026): admin REST + CLI, hashed single-use 7-day token, SMTP sender, public signup, migration 008. Webui: pending.
 
 ## Rooms and messages
 

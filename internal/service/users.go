@@ -17,8 +17,23 @@ import (
 
 var usernameRe = regexp.MustCompile(`^[a-z0-9_.-]{1,64}$`) // matches users CHECK
 
-// CreateUser provisions an account (CLI path only, ADR-014).
+// CreateUser provisions an account (CLI path, ADR-014). An open signup invite
+// for the same email is revoked in the same transaction (ADR-026).
 func (u *UserService) CreateUser(ctx context.Context, username, displayName, email, password, role string) (store.UserRow, error) {
+	var row store.UserRow
+	err := u.App.Store.WithTx(ctx, func(tx *store.Store) error {
+		var err error
+		if row, err = u.createUser(ctx, tx, username, displayName, email, password, role, nil, []byte(`{}`)); err != nil {
+			return err
+		}
+		return tx.RevokeSignupInviteByEmail(ctx, email)
+	})
+	return row, err
+}
+
+// createUser validates and inserts; timezone and prefs are optional extras
+// (signup supplies them).
+func (u *UserService) createUser(ctx context.Context, st *store.Store, username, displayName, email, password, role string, timezone *string, prefs []byte) (store.UserRow, error) {
 	username = strings.ToLower(strings.TrimSpace(username))
 	if !usernameRe.MatchString(username) {
 		return store.UserRow{}, bad("username must match [a-z0-9_.-]{1,64}")
@@ -46,15 +61,16 @@ func (u *UserService) CreateUser(ctx context.Context, username, displayName, ema
 		PasswordHash: hash,
 		Role:         role,
 		Enabled:      true,
-		Preferences:  []byte(`{}`),
+		Preferences:  prefs,
+		Timezone:     timezone,
 	}
-	if err := u.App.Store.InsertUser(ctx, row); err != nil {
+	if err := st.InsertUser(ctx, row); err != nil {
 		if store.IsUnique(err) {
 			return store.UserRow{}, ErrConflict
 		}
 		return store.UserRow{}, fmt.Errorf("create user: %w", err)
 	}
-	return *row, u.App.Store.Audit(ctx, "", "user.create", "user", row.ID, []byte(`{}`), nil)
+	return *row, st.Audit(ctx, "", "user.create", "user", row.ID, []byte(`{}`), nil)
 }
 
 // optString converts "" to nil.

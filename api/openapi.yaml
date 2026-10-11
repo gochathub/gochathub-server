@@ -22,6 +22,7 @@ tags:
   - name: devices
   - name: webhooks
   - name: integrations
+  - name: admin
   - name: health
 
 paths:
@@ -1028,6 +1029,198 @@ paths:
       responses:
         "204":
           description: Declined
+
+  /admin/signup-invites:
+    get:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: listSignupInvites
+      description: >
+        Admin only (ADR-026). 404 when the server has no SMTP configured.
+        Newest first, at most 200.
+      responses:
+        "200":
+          description: Signup invites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SignupInvite"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: createSignupInvite
+      description: >
+        Email an invite link (valid 7 days). Inviting an email that already has
+        an open invite re-keys it (resend). 409 when the email already belongs
+        to an account; 502 `mail_failed` when the invite was saved but the
+        email could not be sent (use resend).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSignupInviteRequest"
+      responses:
+        "201":
+          description: Invite created and emailed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignupInvite"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The email already belongs to an account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: Invite saved, email delivery failed (`mail_failed`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/signup-invites/{inviteId}/resend:
+    parameters:
+      - in: path
+        name: inviteId
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: resendSignupInvite
+      description: Rotate the token (the old link dies), reset expiry, email again.
+      responses:
+        "200":
+          description: Resent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignupInvite"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: Email delivery failed (`mail_failed`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /admin/signup-invites/{inviteId}:
+    parameters:
+      - in: path
+        name: inviteId
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: revokeSignupInvite
+      responses:
+        "204":
+          description: Revoked
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /signup/lookup:
+    post:
+      tags: [auth]
+      security: []
+      operationId: signupLookup
+      description: >
+        Validate an invite token (from the emailed link's `#token=` fragment)
+        and return the invited email. Unknown, expired, used and revoked
+        tokens are indistinguishable (404). Shares the login rate limit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupLookupRequest"
+      responses:
+        "200":
+          description: Live invite
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [email]
+                properties:
+                  email:
+                    type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /signup:
+    post:
+      tags: [auth]
+      security: []
+      operationId: signup
+      description: >
+        Consume an invite token and create the account (role `user`, email
+        taken from the invite), then sign in like `/auth/login` (cookie set).
+        Any validation failure leaves the token usable. Password: 12-128
+        characters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupRequest"
+      responses:
+        "200":
+          description: Account created and signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Turnstile token missing or rejected (`captcha_failed`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Username unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /attachments:
     post:
@@ -2330,6 +2523,74 @@ components:
       properties:
         user_id:
           type: string
+
+    CreateSignupInviteRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+
+    SignupInvite:
+      type: object
+      required: [id, email, status, invited_by, created_at, last_sent_at, expires_at, used_at]
+      description: Admin view; the token is never returned.
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        status:
+          type: string
+          enum: [open, used, revoked, expired]
+        invited_by:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_sent_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        used_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    SignupLookupRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    SignupRequest:
+      type: object
+      required: [token, username, display_name, password]
+      properties:
+        token:
+          type: string
+        username:
+          type: string
+          pattern: "^[a-z0-9_.-]{1,64}$"
+        display_name:
+          type: string
+        password:
+          type: string
+          minLength: 12
+          maxLength: 128
+        timezone:
+          type: string
+          description: IANA zone name; optional.
+        primary_color:
+          type: string
+          description: One of the accent swatches (see Preferences); optional.
+        turnstile_token:
+          type: string
+          description: Required when the server has Turnstile enabled.
 
     CreateInviteRequest:
       type: object

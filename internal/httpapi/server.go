@@ -135,6 +135,14 @@ func (a *API) routes() {
 	mux.Handle("POST /api/v1/invites/{inviteId}/accept", a.chain(true, http.HandlerFunc(a.handleAcceptInvite)))
 	mux.Handle("POST /api/v1/invites/{inviteId}/decline", a.chain(true, http.HandlerFunc(a.handleDeclineInvitePath)))
 
+	// signup invites (ADR-026); 404 when SMTP is not configured
+	mux.Handle("GET /api/v1/admin/signup-invites", a.chain(true, http.HandlerFunc(a.handleListSignupInvites)))
+	mux.Handle("POST /api/v1/admin/signup-invites", a.chain(true, http.HandlerFunc(a.handleCreateSignupInvite)))
+	mux.Handle("POST /api/v1/admin/signup-invites/{inviteId}/resend", a.chain(true, http.HandlerFunc(a.handleResendSignupInvite)))
+	mux.Handle("DELETE /api/v1/admin/signup-invites/{inviteId}", a.chain(true, http.HandlerFunc(a.handleRevokeSignupInvite)))
+	mux.Handle("POST /api/v1/signup/lookup", a.chain(false, http.HandlerFunc(a.handleSignupLookup)))
+	mux.Handle("POST /api/v1/signup", a.chain(false, http.HandlerFunc(a.handleSignup)))
+
 	// messages
 	mux.Handle("GET /api/v1/rooms/{roomId}/messages", a.chain(true, http.HandlerFunc(a.handleListMessages)))
 	mux.Handle("POST /api/v1/rooms/{roomId}/messages", a.chain(true, http.HandlerFunc(a.handleCreateMessage)))
@@ -299,6 +307,8 @@ func (a *API) mapError(w http.ResponseWriter, err error) {
 		writeError(w, 403, "forbidden", "not allowed")
 	case errors.Is(err, service.ErrNotFound):
 		writeError(w, 404, "not_found", "not found")
+	case errors.Is(err, service.ErrMailFailed):
+		writeError(w, 502, "mail_failed", "invite saved but the email could not be sent; resend it")
 	case errors.Is(err, service.ErrConflict):
 		writeError(w, 409, "conflict", "duplicate or closed")
 	default:

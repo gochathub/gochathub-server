@@ -80,6 +80,11 @@ type Config struct {
 	RCPatKey     string
 	RCAllowHosts []string
 	RCLinkSync   time.Duration
+
+	// Outbound email for signup invites (ADR-026). Empty SMTPHost = feature off.
+	SMTPHost, SMTPPort, SMTPUser, SMTPPass string
+	SMTPTLS                                string // starttls | implicit | none
+	MailFrom                               string
 }
 
 func Load() (*Config, error) {
@@ -166,6 +171,21 @@ func Load() (*Config, error) {
 	}
 	if (c.S3Endpoint == "") != (c.S3Bucket == "") || (c.S3AccessKey == "") != (c.S3SecretKey == "") {
 		return nil, errors.New("attachment storage requires S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY and S3_SECRET_KEY together")
+	}
+	c.SMTPPort, c.SMTPTLS = "587", "starttls"
+	str(&c.SMTPHost, "SMTP_HOST")
+	str(&c.SMTPPort, "SMTP_PORT")
+	str(&c.SMTPUser, "SMTP_USER")
+	str(&c.SMTPPass, "SMTP_PASS")
+	str(&c.SMTPTLS, "SMTP_TLS")
+	str(&c.MailFrom, "MAIL_FROM")
+	if c.SMTPHost != "" {
+		if c.MailFrom == "" || c.BaseOrigin == "" {
+			return nil, errors.New("MAIL_FROM and ORIGIN are required when SMTP_HOST is set (sender address, invite link base)")
+		}
+		if c.SMTPTLS != "starttls" && c.SMTPTLS != "implicit" && c.SMTPTLS != "none" {
+			return nil, errors.New("SMTP_TLS must be starttls, implicit or none")
+		}
 	}
 	return c, nil
 }

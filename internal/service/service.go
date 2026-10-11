@@ -59,6 +59,7 @@ type App struct {
 	Attachments *AttachmentService
 	Devices     *DeviceService
 	Webhooks    *WebhookService
+	Signup      *SignupInviteService // Mail == nil: disabled
 }
 
 // PushSender is the push boundary. Push is a delivery optimization; never

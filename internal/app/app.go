@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gochathub/gochathub-server/internal/config"
+	"github.com/gochathub/gochathub-server/internal/mail"
 	"github.com/gochathub/gochathub-server/internal/push"
 	"github.com/gochathub/gochathub-server/internal/rcbridge"
 	"github.com/gochathub/gochathub-server/internal/service"
@@ -64,6 +65,10 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 		svc.Auth.VerifyCaptcha = (&service.Turnstile{Secret: cfg.TurnstileSecret, Hostname: cfg.TurnstileHostname}).Verify
 	}
 
+	if cfg.SMTPHost != "" { // assign only when enabled: a typed-nil would defeat the Mail == nil switch
+		svc.Signup.Mail = &mail.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Pass: cfg.SMTPPass, From: cfg.MailFrom, TLS: cfg.SMTPTLS}
+	}
+
 	hub := ws.NewHub(log)
 	hub.App = svc
 	svc.Notify = hub
@@ -85,6 +90,7 @@ func WireServices(app *service.App, log *slog.Logger, sessionTTL time.Duration) 
 	app.Attachments = &service.AttachmentService{App: app}
 	app.Devices = &service.DeviceService{App: app}
 	app.Webhooks = &service.WebhookService{App: app}
+	app.Signup = &service.SignupInviteService{App: app}
 }
 
 func storageFor(ctx context.Context, cfg *config.Config) (service.Storage, error) {

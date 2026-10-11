@@ -80,6 +80,8 @@ receipt aggregation (ADR-009) when set to false.
 
 ## ADR-014: Accounts are CLI-managed only
 
+> Superseded in part by ADR-026: admins may now invite by email.
+
 No self-registration, password reset, email verification, or SMTP integration. Users are created and password-reset through the admin CLI (`chat-server user create`, `chat-server user passwd`).
 
 Reason: the deployment is self-hosted with no email infrastructure; account onboarding is an administrator action. The web fork strips the signup and password-reset pages. Revisit with an ADR if public sign-up is ever required.
@@ -193,3 +195,17 @@ Design in `docs/PASSKEYS.md`.
 - **Android = browser handoff, not Credential Manager**: Credential Manager needs `/.well-known/assetlinks.json` per server domain and per signing key (F-Droid/Play/debug differ). Instead the app opens a Custom Tab on the web login; after any login the page mints a 60 s one-time code bound to the app's PKCE challenge (`/auth/mobile/code`) and deep-links it; the app redeems it (`/auth/mobile/token`) for a normal API token. An intercepted deep link yields a code that is useless without the verifier.
 - **Rate limits**: passkey `finish` and the code exchange share a dedicated per-IP bucket (`passkeyRate`, same ceiling as password login); `begin` only the global bucket.
 - **Not done (ponytail)**: attestation / FIDO MDS (attestation `none`), related-origins, passkey-only enforcement, step-up on delete/rename.
+
+## ADR-026: Email signup invites (supersedes ADR-014's "no email, CLI-only accounts")
+
+Design in `docs/SIGNUP_INVITES_DESIGN.md`; requirements in `docs/SIGNUP_INVITES_REQUIREMENTS.md`.
+
+- **Admin-initiated only**: an admin (REST, CLI `signup-invite`, webui Admin page) emails a one-time link; there is still no open registration, no password reset and no email verification beyond "you hold the link". CLI `user create` remains.
+- **Token**: 256-bit, stored hashed (`signup_invites.token_hash`), single-use, 7-day expiry, revocable. The link carries it in the URL fragment (`ORIGIN/signup#token=…`) so it never reaches server logs or Referer; the API takes it in a POST body. Unknown/expired/used/revoked are indistinguishable (404).
+- **Consume + create in one transaction**: a row-locking `UPDATE … WHERE unused` makes concurrent submits yield one account; validation failures roll back and leave the token live. Role is always `user`; the email comes from the invite row.
+- **Resend = re-key**: one open invite per email (partial unique index); inviting an open email or `resend` rotates the token and resets expiry. `CreateUser` revokes an open invite for its email in the same transaction.
+- **Email transport**: `service.Mailer` (real boundary, faked in tests); stdlib `net/smtp` implementation in `internal/mail`. `SMTP_HOST` is the feature switch (`MAIL_FROM` and `ORIGIN` required with it); unset = every signup route 404s. SMTP auth is refused over `SMTP_TLS=none`. A Postmark HTTP sender is a later drop-in.
+- **Abuse guard**: public routes share the per-IP login bucket; Turnstile (when configured) on `POST /signup`.
+- **Password rule (signup only)**: 12–128 characters, no composition rules.
+- **`users.username` uniqueness**: migration 008 adds the missing `UNIQUE` index (001 only had a CHECK, so the CLI's conflict path never fired). It fails if duplicates exist — resolve by hand.
+- **Not done (ponytail)**: async mail queue (send is synchronous, 15 s bound), HTML mail, per-invite role/rooms, Postmark sender.
