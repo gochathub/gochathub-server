@@ -29,6 +29,8 @@ func (f *fakeMailer) Send(_ context.Context, m service.Mail) error {
 	return nil
 }
 
+func (f *fakeMailer) Enabled(context.Context) bool { return true }
+
 func (f *fakeMailer) token(t *testing.T, to string) string {
 	t.Helper()
 	f.mu.Lock()
@@ -158,6 +160,7 @@ func TestSignupInviteLifecycle(t *testing.T) {
 	}
 	mail := &fakeMailer{}
 	svc.Signup.Mail = mail
+	svc.BaseOrigin = "https://chat.test"
 	anon := &client{t: t, b: ts.URL}
 	admin := anon.forUser(svc, "root")
 
@@ -224,6 +227,7 @@ func TestSignupConcurrentSingleUse(t *testing.T) {
 	}
 	mail := &fakeMailer{}
 	svc.Signup.Mail = mail
+	svc.BaseOrigin = "https://chat.test"
 	admin := (&client{t: t, b: ts.URL}).forUser(svc, "root")
 	admin.do("POST", "/api/v1/admin/signup-invites", map[string]string{"email": "race@test.invalid"}, 201)
 	tok := mail.token(t, "race@test.invalid")
@@ -247,4 +251,13 @@ func TestSignupConcurrentSingleUse(t *testing.T) {
 	if ok != 1 {
 		t.Fatalf("want exactly 1 account, got %d", ok)
 	}
+}
+
+func toJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }

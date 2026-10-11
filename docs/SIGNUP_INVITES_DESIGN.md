@@ -69,19 +69,20 @@ Complete(ctx, in CompleteInput, ua string, ip *string) (token string, store.User
 - **CLI wins**: `CreateUser` runs in `WithTx` and revokes any open invite for its email.
 - Email stored lowercase/trimmed; same rule as `CreateUser`.
 
-## Mail transport (`internal/mail`, stdlib `net/smtp`)
+## Mail transport (`internal/mail`, stdlib `net/smtp`) + settings
 
-`SMTP` implements `Mailer`. Env (all operator-supplied, no user-controlled host → no SSRF surface):
+`SMTP` implements `Mailer`. Configuration is **admin-edited in the webui** (Admin → Email), stored in `app_config` key `mail.smtp` as JSON `{host, port, user, pass_enc, tls, from}`; `service.MailSettings` is itself the `Mailer` the invite service sends through, reading the saved config per send (edits apply immediately).
 
-| Var | Meaning |
+| Piece | Behavior |
 |---|---|
-| `SMTP_HOST` | feature switch; unset = off |
-| `SMTP_PORT` | default 587 |
-| `SMTP_USER` / `SMTP_PASS` | optional auth (PLAIN, only over TLS) |
-| `SMTP_TLS` | `starttls` (default), `implicit`, `none` (dev only) |
-| `MAIL_FROM` | required when `SMTP_HOST` set |
+| `SECRETS_KEY` (env) | derives an AES-256-GCM key (sha256); seals `pass_enc`. Unset → `PUT` is a 400 and the feature stays off |
+| `MAIL_ALLOW_HOSTS` (env) | hosts exempt from the private-address rejection (self-hosted relay) |
+| host | bare hostname/IP; `push.CheckHost` at every send; empty host on `PUT` clears the config |
+| tls | `starttls` / `implicit` / `none`; auth over `none` is refused |
+| password | write-only: omitted on `PUT` keeps the stored one; responses carry `has_password` only |
+| `ORIGIN` | required for the invite link (checked when sending) |
 
-Startup fails if `SMTP_HOST` is set without `MAIL_FROM` or `ORIGIN` (the link base). Header injection: reject CR/LF in To/Subject/From. A Postmark HTTP `Mailer` is a later drop-in; not built now.
+`POST /admin/mail-settings/test` sends a message through the saved settings. Header injection: reject CR/LF in To/Subject/From. A Postmark HTTP `Mailer` is a later drop-in.
 
 Body (plain text):
 

@@ -120,3 +120,55 @@ func (a *API) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}, r.UserAgent(), ip)
 	a.finishLogin(w, r, token, user, err, false)
 }
+
+// --- admin: /admin/mail-settings (ADR-026) ---
+
+func (a *API) handleGetMailSettings(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	v, err := a.svc.MailCfg.Get(r.Context(), p)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (a *API) handlePutMailSettings(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in struct {
+		Host     string  `json:"host"`
+		Port     string  `json:"port"`
+		User     string  `json:"user"`
+		Password *string `json:"password"`
+		TLS      string  `json:"tls"`
+		From     string  `json:"from"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	v, err := a.svc.MailCfg.Save(r.Context(), p, service.MailSettingsInput{
+		Host: in.Host, Port: in.Port, User: in.User, Password: in.Password, TLS: in.TLS, From: in.From,
+	})
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (a *API) handleTestMailSettings(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in struct {
+		To string `json:"to"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	if err := a.svc.MailCfg.Test(r.Context(), p, in.To); err != nil {
+		a.mapError(w, err)
+		return
+	}
+	w.WriteHeader(204)
+}

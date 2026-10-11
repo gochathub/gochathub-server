@@ -95,3 +95,6 @@ func (a plainAuth) Next(_ []byte, more bool) ([]byte, error) {
 	}
 	return nil, nil
 }
+
+// Enabled: a constructed sender is always usable (MailSettings gates the feature).
+func (s *SMTP) Enabled(context.Context) bool { return true }

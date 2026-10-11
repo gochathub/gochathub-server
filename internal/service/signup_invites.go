@@ -21,12 +21,14 @@ const signupInviteTTL = 7 * 24 * time.Hour
 // Mail is a plain-text message.
 type Mail struct{ To, Subject, Body string }
 
-// Mailer is the outbound email boundary (SMTP in prod, a fake in tests).
+// Mailer is the outbound email boundary (admin-configured SMTP in prod, a fake
+// in tests). Enabled false switches the signup-invite feature off.
 type Mailer interface {
 	Send(ctx context.Context, m Mail) error
+	Enabled(ctx context.Context) bool
 }
 
-// SignupInviteService manages email signup invites (ADR-026). Mail == nil
+// SignupInviteService manages email signup invites (ADR-026). !Mail.Enabled
 // disables the feature: every method returns ErrNotFound.
 type SignupInviteService struct {
 	App  *App
@@ -59,8 +61,8 @@ func inviteView(r store.SignupInviteRow) SignupInvite {
 		CreatedAt: r.CreatedAt, LastSentAt: r.LastSentAt, ExpiresAt: r.ExpiresAt, UsedAt: r.UsedAt}
 }
 
-func (s *SignupInviteService) admin(p Principal) error {
-	if s.Mail == nil {
+func (s *SignupInviteService) admin(ctx context.Context, p Principal) error {
+	if !s.Mail.Enabled(ctx) {
 		return ErrNotFound
 	}
 	if !p.IsAdmin() {
@@ -71,7 +73,7 @@ func (s *SignupInviteService) admin(p Principal) error {
 
 // Create invites an email, or re-keys (resends) its open invite.
 func (s *SignupInviteService) Create(ctx context.Context, p Principal, email string) (SignupInvite, error) {
-	if err := s.admin(p); err != nil {
+	if err := s.admin(ctx, p); err != nil {
 		return SignupInvite{}, err
 	}
 	email = strings.ToLower(strings.TrimSpace(email))
@@ -90,7 +92,7 @@ func (s *SignupInviteService) Create(ctx context.Context, p Principal, email str
 
 // Resend rotates the token of an open invite and mails it again.
 func (s *SignupInviteService) Resend(ctx context.Context, p Principal, inviteID string) (SignupInvite, error) {
-	if err := s.admin(p); err != nil {
+	if err := s.admin(ctx, p); err != nil {
 		return SignupInvite{}, err
 	}
 	row, err := s.App.Store.SignupInviteByID(ctx, inviteID)
@@ -101,6 +103,9 @@ func (s *SignupInviteService) Resend(ctx context.Context, p Principal, inviteID 
 }
 
 func (s *SignupInviteService) send(ctx context.Context, p Principal, row store.SignupInviteRow, action string) (SignupInvite, error) {
+	if s.App.BaseOrigin == "" {
+		return SignupInvite{}, bad("ORIGIN is not set on the server; it is the base of the invite link")
+	}
 	token := id.NewToken()
 	row.InvitedBy = &p.UserID
 	row.ExpiresAt = time.Now().Add(signupInviteTTL)
@@ -131,7 +136,7 @@ func (s *SignupInviteService) send(ctx context.Context, p Principal, row store.S
 }
 
 func (s *SignupInviteService) List(ctx context.Context, p Principal) ([]SignupInvite, error) {
-	if err := s.admin(p); err != nil {
+	if err := s.admin(ctx, p); err != nil {
 		return nil, err
 	}
 	rows, err := s.App.Store.ListSignupInvites(ctx)
@@ -146,7 +151,7 @@ func (s *SignupInviteService) List(ctx context.Context, p Principal) ([]SignupIn
 }
 
 func (s *SignupInviteService) Revoke(ctx context.Context, p Principal, inviteID string) error {
-	if err := s.admin(p); err != nil {
+	if err := s.admin(ctx, p); err != nil {
 		return err
 	}
 	if err := s.App.Store.RevokeSignupInvite(ctx, inviteID); err != nil {
@@ -157,7 +162,7 @@ func (s *SignupInviteService) Revoke(ctx context.Context, p Principal, inviteID 
 
 // Lookup returns the invited email; every failure mode is ErrNotFound.
 func (s *SignupInviteService) Lookup(ctx context.Context, token string) (string, error) {
-	if s.Mail == nil {
+	if !s.Mail.Enabled(ctx) {
 		return "", ErrNotFound
 	}
 	return s.App.Store.LookupSignupInvite(ctx, id.HashToken(token))
@@ -171,7 +176,7 @@ type CompleteInput struct {
 // Complete consumes the token and creates the account in one transaction; any
 // failure (bad username, weak password...) rolls back and leaves the token live.
 func (s *SignupInviteService) Complete(ctx context.Context, in CompleteInput, userAgent string, ip *string) (string, store.UserRow, error) {
-	if s.Mail == nil {
+	if !s.Mail.Enabled(ctx) {
 		return "", store.UserRow{}, ErrNotFound
 	}
 	if n := len(in.Password); n < 12 || n > 128 {

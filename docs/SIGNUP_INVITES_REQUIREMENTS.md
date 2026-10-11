@@ -18,7 +18,7 @@ An admin invites a person by email. The email carries a URL to a signup form tha
 | Signup fields | username, display name, password, timezone, accent color (`primary_color`). Email pre-filled from the invite and read-only |
 | After submit | Account created and session cookie issued in one call; client lands in chat |
 | Abuse guard | Turnstile on submit (when configured) plus per-IP rate limit on both public endpoints |
-| Email transport | Pluggable sender: SMTP or a provider HTTP API (Postmark), selected by env. Unset means the feature is off |
+| Email transport | SMTP, configured by admins in the webui (stored in the DB, password encrypted with env `SECRETS_KEY`); no SMTP env vars. Feature is off until configured. Postmark API later |
 | Admin surfaces | CLI + REST + webui admin page (list / create / revoke / resend) |
 
 ## Functional requirements

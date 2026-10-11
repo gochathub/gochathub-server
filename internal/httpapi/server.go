@@ -135,11 +135,14 @@ func (a *API) routes() {
 	mux.Handle("POST /api/v1/invites/{inviteId}/accept", a.chain(true, http.HandlerFunc(a.handleAcceptInvite)))
 	mux.Handle("POST /api/v1/invites/{inviteId}/decline", a.chain(true, http.HandlerFunc(a.handleDeclineInvitePath)))
 
-	// signup invites (ADR-026); 404 when SMTP is not configured
+	// signup invites + SMTP settings (ADR-026); invite routes 404 until mail is configured
 	mux.Handle("GET /api/v1/admin/signup-invites", a.chain(true, http.HandlerFunc(a.handleListSignupInvites)))
 	mux.Handle("POST /api/v1/admin/signup-invites", a.chain(true, http.HandlerFunc(a.handleCreateSignupInvite)))
 	mux.Handle("POST /api/v1/admin/signup-invites/{inviteId}/resend", a.chain(true, http.HandlerFunc(a.handleResendSignupInvite)))
 	mux.Handle("DELETE /api/v1/admin/signup-invites/{inviteId}", a.chain(true, http.HandlerFunc(a.handleRevokeSignupInvite)))
+	mux.Handle("GET /api/v1/admin/mail-settings", a.chain(true, http.HandlerFunc(a.handleGetMailSettings)))
+	mux.Handle("PUT /api/v1/admin/mail-settings", a.chain(true, http.HandlerFunc(a.handlePutMailSettings)))
+	mux.Handle("POST /api/v1/admin/mail-settings/test", a.chain(true, http.HandlerFunc(a.handleTestMailSettings)))
 	mux.Handle("POST /api/v1/signup/lookup", a.chain(false, http.HandlerFunc(a.handleSignupLookup)))
 	mux.Handle("POST /api/v1/signup", a.chain(false, http.HandlerFunc(a.handleSignup)))
 

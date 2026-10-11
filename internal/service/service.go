@@ -59,7 +59,8 @@ type App struct {
 	Attachments *AttachmentService
 	Devices     *DeviceService
 	Webhooks    *WebhookService
-	Signup      *SignupInviteService // Mail == nil: disabled
+	Signup      *SignupInviteService // mail via MailCfg: off until an admin saves SMTP settings
+	MailCfg     *MailSettings
 }
 
 // PushSender is the push boundary. Push is a delivery optimization; never

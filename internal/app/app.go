@@ -65,8 +65,11 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 		svc.Auth.VerifyCaptcha = (&service.Turnstile{Secret: cfg.TurnstileSecret, Hostname: cfg.TurnstileHostname}).Verify
 	}
 
-	if cfg.SMTPHost != "" { // assign only when enabled: a typed-nil would defeat the Mail == nil switch
-		svc.Signup.Mail = &mail.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Pass: cfg.SMTPPass, From: cfg.MailFrom, TLS: cfg.SMTPTLS}
+	// outbound mail: settings live in the database (admin UI); SECRETS_KEY seals the SMTP password
+	svc.MailCfg.Key = service.NewSecretsKey(cfg.SecretsKey)
+	svc.MailCfg.AllowHosts = cfg.MailAllowHosts
+	svc.MailCfg.NewSender = func(c service.SMTPConfig) service.Mailer {
+		return &mail.SMTP{Host: c.Host, Port: c.Port, User: c.User, Pass: c.Pass, From: c.From, TLS: c.TLS}
 	}
 
 	hub := ws.NewHub(log)
@@ -90,7 +93,8 @@ func WireServices(app *service.App, log *slog.Logger, sessionTTL time.Duration) 
 	app.Attachments = &service.AttachmentService{App: app}
 	app.Devices = &service.DeviceService{App: app}
 	app.Webhooks = &service.WebhookService{App: app}
-	app.Signup = &service.SignupInviteService{App: app}
+	app.MailCfg = &service.MailSettings{App: app}
+	app.Signup = &service.SignupInviteService{App: app, Mail: app.MailCfg}
 }
 
 func storageFor(ctx context.Context, cfg *config.Config) (service.Storage, error) {

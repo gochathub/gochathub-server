@@ -1030,13 +1030,82 @@ paths:
         "204":
           description: Declined
 
+  /admin/mail-settings:
+    get:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: getMailSettings
+      description: >
+        Admin only (ADR-026). Outbound SMTP configuration used for signup
+        invites. The password is never returned (`has_password`).
+      responses:
+        "200":
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailSettings"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: putMailSettings
+      description: >
+        Save the SMTP configuration. Omit `password` to keep the stored one;
+        an empty `host` clears the configuration (signup invites switch off).
+        400 when the server has no `SECRETS_KEY` (it seals the password).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutMailSettingsRequest"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/mail-settings/test:
+    post:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: testMailSettings
+      description: >
+        Send a test message through the saved settings. A delivery failure is
+        a 400 whose message carries the SMTP error (admin only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to:
+                  type: string
+      responses:
+        "204":
+          description: Sent
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/signup-invites:
     get:
       tags: [admin]
       security: [{ bearerAuth: [] }]
       operationId: listSignupInvites
       description: >
-        Admin only (ADR-026). 404 when the server has no SMTP configured.
+        Admin only (ADR-026). 404 until an admin has saved mail settings.
         Newest first, at most 200.
       responses:
         "200":
@@ -2522,6 +2591,51 @@ components:
       required: [user_id]
       properties:
         user_id:
+          type: string
+
+    MailSettings:
+      type: object
+      required: [host, port, user, tls, from, has_password, configured, encryption_available]
+      properties:
+        host:
+          type: string
+        port:
+          type: string
+        user:
+          type: string
+        tls:
+          type: string
+          enum: [starttls, implicit, none, ""]
+        from:
+          type: string
+        has_password:
+          type: boolean
+        configured:
+          type: boolean
+          description: Invites can be sent (host saved and SECRETS_KEY set).
+        encryption_available:
+          type: boolean
+          description: False when the server has no SECRETS_KEY; settings cannot be saved.
+
+    PutMailSettingsRequest:
+      type: object
+      required: [host, tls, from]
+      properties:
+        host:
+          type: string
+          description: Bare hostname or IP; empty clears the configuration.
+        port:
+          type: string
+          description: Defaults to 587.
+        user:
+          type: string
+        password:
+          type: string
+          description: Omit to keep the stored password.
+        tls:
+          type: string
+          enum: [starttls, implicit, none]
+        from:
           type: string
 
     CreateSignupInviteRequest:
