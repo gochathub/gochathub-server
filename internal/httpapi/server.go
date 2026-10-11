@@ -140,6 +140,8 @@ func (a *API) routes() {
 	mux.Handle("POST /api/v1/admin/signup-invites", a.chain(true, http.HandlerFunc(a.handleCreateSignupInvite)))
 	mux.Handle("POST /api/v1/admin/signup-invites/{inviteId}/resend", a.chain(true, http.HandlerFunc(a.handleResendSignupInvite)))
 	mux.Handle("DELETE /api/v1/admin/signup-invites/{inviteId}", a.chain(true, http.HandlerFunc(a.handleRevokeSignupInvite)))
+	mux.Handle("GET /api/v1/admin/ui-settings", a.chain(true, http.HandlerFunc(a.handleGetUISettings)))
+	mux.Handle("PUT /api/v1/admin/ui-settings", a.chain(true, http.HandlerFunc(a.handlePutUISettings)))
 	mux.Handle("GET /api/v1/admin/mail-settings", a.chain(true, http.HandlerFunc(a.handleGetMailSettings)))
 	mux.Handle("PUT /api/v1/admin/mail-settings", a.chain(true, http.HandlerFunc(a.handleSetActiveMail)))
 	mux.Handle("PUT /api/v1/admin/mail-settings/{provider}", a.chain(true, http.HandlerFunc(a.handleSaveMailProvider)))

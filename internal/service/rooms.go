@@ -178,7 +178,17 @@ func (rs *RoomService) List(ctx context.Context, p Principal) ([]model.Room, err
 	}
 	out := make([]model.Room, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, rs.toModel(ctx, r.RoomRow, r.MyRole, r.UnreadCount))
+		m := rs.toModel(ctx, r.RoomRow, r.MyRole, r.UnreadCount)
+		if lm := r.LastMsg; lm != nil {
+			m.LastMessage = &model.RoomLastMessage{ID: lm.ID, AuthorID: lm.AuthorID, AuthorName: lm.AuthorName,
+				Body: lm.Body, HasAttachment: lm.HasAttachment, CreatedAt: lm.CreatedAt}
+		}
+		m.FirstUnreadMessageID = r.FirstUnreadID
+		// online only when the peer is connected and opted in to last-seen (ADR-013)
+		if r.PeerID != nil && rs.App.Notify != nil && rs.App.Notify.Connected(*r.PeerID) {
+			m.PeerOnline = decodePrefs(r.PeerPreferences).LastSeenVisible
+		}
+		out = append(out, m)
 	}
 	return out, nil
 }

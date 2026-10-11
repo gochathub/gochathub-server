@@ -116,6 +116,19 @@ type RoomSummaryRow struct {
 	UnreadCount int64
 	LastReadID  *string
 	MemberCount int64
+	// sidebar row data (classic layout): newest live message, oldest unread
+	// message, and the DM peer (id + stored preferences for the presence gate)
+	LastMsg         *LastMessageRow
+	FirstUnreadID   *string
+	PeerID          *string
+	PeerPreferences []byte
+}
+
+// LastMessageRow is a room's newest non-deleted message, body truncated.
+type LastMessageRow struct {
+	ID, AuthorID, AuthorName, Body string
+	CreatedAt                      time.Time
+	HasAttachment                  bool
 }
 
 // ListRoomsForUser returns the caller's rooms (archived included; the client
@@ -128,7 +141,10 @@ func (s *Store) ListRoomsForUser(ctx context.Context, userID string) ([]RoomSumm
 			m.role::text, m.archived,
 			COALESCE(rc.unread, 0),
 			m.last_read_message_id::text,
-			mc.member_count
+			mc.member_count,
+			lm.id, lm.author_id, lm.author_name, lm.body, lm.created_at, lm.has_attachment,
+			fu.id,
+			peer.id, peer.preferences
 		FROM room_members m
 		JOIN rooms r ON r.id = m.room_id
 		LEFT JOIN LATERAL (
@@ -140,6 +156,27 @@ func (s *Store) ListRoomsForUser(ctx context.Context, userID string) ([]RoomSumm
 		LEFT JOIN LATERAL (
 			SELECT count(*) AS member_count FROM room_members x WHERE x.room_id = r.id
 		) mc ON true
+		LEFT JOIN LATERAL (
+			SELECT ms.id::text AS id, ms.author_id::text AS author_id,
+				COALESCE(NULLIF(u.display_name, ''), u.username) AS author_name,
+				left(ms.body, 200) AS body, ms.created_at,
+				EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.message_id = ms.id) AS has_attachment
+			FROM messages ms JOIN users u ON u.id = ms.author_id
+			WHERE ms.room_id = r.id AND ms.deleted_at IS NULL
+			ORDER BY ms.created_at DESC, ms.id DESC LIMIT 1
+		) lm ON true
+		LEFT JOIN LATERAL (
+			SELECT ms.id::text AS id
+			FROM message_receipts mr
+			JOIN messages ms ON ms.id = mr.message_id AND ms.room_id = r.id AND ms.deleted_at IS NULL
+			WHERE mr.user_id = m.user_id AND mr.read_at IS NULL
+			ORDER BY ms.created_at, ms.id LIMIT 1
+		) fu ON true
+		LEFT JOIN LATERAL (
+			SELECT x.user_id::text AS id, pu.preferences
+			FROM room_members x JOIN users pu ON pu.id = x.user_id
+			WHERE r.type = 'direct' AND x.room_id = r.id AND x.user_id <> m.user_id LIMIT 1
+		) peer ON true
 		WHERE m.user_id = $1 AND r.archived_at IS NULL
 		ORDER BY r.updated_at DESC`,
 		userID)
@@ -150,11 +187,22 @@ func (s *Store) ListRoomsForUser(ctx context.Context, userID string) ([]RoomSumm
 	var out []RoomSummaryRow
 	for rows.Next() {
 		var rr RoomSummaryRow
+		var lm struct {
+			id, authorID, authorName, body *string
+			createdAt                      *time.Time
+			hasAttachment                  *bool
+		}
 		if err := rows.Scan(&rr.ID, &rr.Type, &rr.Name, &rr.Description, &rr.AvatarAttachmentID,
 			&rr.CreatedBy, &rr.PinnedMessageID, &rr.ArchivedAt, &rr.CreatedAt, &rr.UpdatedAt,
 			&rr.Source, &rr.SourceRID, &rr.SourceSyncedAt,
-			&rr.MyRole, &rr.Archived, &rr.UnreadCount, &rr.LastReadID, &rr.MemberCount); err != nil {
+			&rr.MyRole, &rr.Archived, &rr.UnreadCount, &rr.LastReadID, &rr.MemberCount,
+			&lm.id, &lm.authorID, &lm.authorName, &lm.body, &lm.createdAt, &lm.hasAttachment,
+			&rr.FirstUnreadID, &rr.PeerID, &rr.PeerPreferences); err != nil {
 			return nil, err
+		}
+		if lm.id != nil {
+			rr.LastMsg = &LastMessageRow{ID: *lm.id, AuthorID: *lm.authorID, AuthorName: *lm.authorName,
+				Body: *lm.body, CreatedAt: *lm.createdAt, HasAttachment: *lm.hasAttachment}
 		}
 		out = append(out, rr)
 	}

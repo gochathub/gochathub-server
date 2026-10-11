@@ -15,6 +15,16 @@ type Preferences struct {
 	// Accent color swatch (service.PrimaryColorSwatches); "" resolves to the
 	// default at decode. Clients derive everything else from the hex.
 	PrimaryColor string `json:"primary_color"`
+	// Layout is the user's choice: "instance" (follow the admin default),
+	// "modern" or "classic". InstanceLayout is the admin default, filled on
+	// read and never stored (omitempty keeps it out of the JSONB).
+	Layout         string `json:"layout"`
+	InstanceLayout string `json:"instance_layout,omitempty"`
+}
+
+// UISettings is the admin-wide interface setting (/admin/ui-settings).
+type UISettings struct {
+	DefaultLayout string `json:"default_layout"` // modern | classic
 }
 
 // PreferencesPatch is the PATCH /users/me/preferences form (partial).
@@ -26,6 +36,7 @@ type PreferencesPatch struct {
 	SpellcheckEnabled    *bool     `json:"spellcheck_enabled,omitempty"`
 	SpellcheckWords      *[]string `json:"spellcheck_words,omitempty"`
 	PrimaryColor         *string   `json:"primary_color,omitempty"` // "" = reset to default
+	Layout               *string   `json:"layout,omitempty"`        // instance | modern | classic
 }
 
 // User is the API user. `email` is only populated on self payloads.
@@ -73,9 +84,26 @@ type Room struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 	MyRole      string    `json:"my_role,omitempty"` // caller's member role
 	UnreadCount int64     `json:"unread_count,omitempty"`
+	// Room-list extras (GET /rooms only), for the sidebar row and unread
+	// divider: newest live message, oldest unread message for the caller, and
+	// whether a direct room's peer is connected (omitted when offline, unknown
+	// or the peer hides last-seen).
+	LastMessage          *RoomLastMessage `json:"last_message,omitempty"`
+	FirstUnreadMessageID *string          `json:"first_unread_message_id,omitempty"`
+	PeerOnline           bool             `json:"peer_online,omitempty"`
 	// Source marks cross-server rooms from a live Rocket.Chat bridge
 	// (docs/ROCKETCHAT-INTEGRATION.md); omitted entirely for native rooms.
 	Source string `json:"source,omitempty"`
+}
+
+// RoomLastMessage is the room-list preview; Body is truncated to 200 chars.
+type RoomLastMessage struct {
+	ID            string    `json:"id"`
+	AuthorID      string    `json:"author_id"`
+	AuthorName    string    `json:"author_name"`
+	Body          string    `json:"body"`
+	HasAttachment bool      `json:"has_attachment"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type InviteStatus string

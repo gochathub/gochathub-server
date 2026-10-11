@@ -262,7 +262,44 @@ func (u *UserService) GetPreferences(ctx context.Context, p Principal) (model.Pr
 	if err != nil {
 		return model.Preferences{}, ErrNotFound
 	}
-	return decodePrefs(row.Preferences), nil
+	return u.withInstanceLayout(ctx, decodePrefs(row.Preferences)), nil
+}
+
+const uiDefaultLayoutKey = "ui.default_layout"
+
+// instanceLayout is the admin default; unset or unknown resolves to modern.
+func (u *UserService) instanceLayout(ctx context.Context) string {
+	if v, _ := u.App.Store.GetConfigValue(ctx, uiDefaultLayoutKey); v == "classic" {
+		return v
+	}
+	return "modern"
+}
+
+func (u *UserService) withInstanceLayout(ctx context.Context, p model.Preferences) model.Preferences {
+	p.InstanceLayout = u.instanceLayout(ctx)
+	return p
+}
+
+// GetUISettings returns the admin-wide interface settings (admin only).
+func (u *UserService) GetUISettings(ctx context.Context, p Principal) (model.UISettings, error) {
+	if !p.IsAdmin() {
+		return model.UISettings{}, ErrForbidden
+	}
+	return model.UISettings{DefaultLayout: u.instanceLayout(ctx)}, nil
+}
+
+// SetUISettings stores the admin-wide default layout (admin only).
+func (u *UserService) SetUISettings(ctx context.Context, p Principal, in model.UISettings) (model.UISettings, error) {
+	if !p.IsAdmin() {
+		return model.UISettings{}, ErrForbidden
+	}
+	if in.DefaultLayout != "modern" && in.DefaultLayout != "classic" {
+		return model.UISettings{}, bad("default_layout: must be modern or classic")
+	}
+	if err := u.App.Store.SetConfigValue(ctx, uiDefaultLayoutKey, in.DefaultLayout); err != nil {
+		return model.UISettings{}, fmt.Errorf("set ui settings: %w", err)
+	}
+	return in, nil
 }
 
 // PatchPreferences merges the patch into stored prefs.
@@ -283,6 +320,9 @@ func (u *UserService) PatchPreferences(ctx context.Context, p Principal, patch m
 			return model.Preferences{}, bad("primary_color: must be one of the supported swatches")
 		}
 	}
+	if l := patch.Layout; l != nil && *l != LayoutInstance && *l != "modern" && *l != "classic" {
+		return model.Preferences{}, bad("layout: must be instance, modern or classic")
+	}
 	row, err := u.App.Store.UserByID(ctx, p.UserID)
 	if err != nil {
 		return model.Preferences{}, ErrNotFound
@@ -296,7 +336,7 @@ func (u *UserService) PatchPreferences(ctx context.Context, p Principal, patch m
 		return model.Preferences{}, fmt.Errorf("set preferences: %w", err)
 	}
 	// The stored "" reset stays in the DB; the response reports the effective value.
-	return decodePrefs(raw), nil
+	return u.withInstanceLayout(ctx, decodePrefs(raw)), nil
 }
 
 // Search finds enabled users by username/display-name substring.

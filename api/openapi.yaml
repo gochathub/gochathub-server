@@ -1030,6 +1030,44 @@ paths:
         "204":
           description: Declined
 
+  /admin/ui-settings:
+    get:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: getUISettings
+      description: Admin only (ADR-027). The instance-wide default layout; `modern` until set.
+      responses:
+        "200":
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UISettings"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: putUISettings
+      description: Admin only (ADR-027). Takes effect for users whose `layout` is `instance`, on their next preferences load.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UISettings"
+      responses:
+        "200":
+          description: Saved settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UISettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /admin/mail-settings:
     get:
       tags: [admin]
@@ -2244,7 +2282,7 @@ components:
 
     Preferences:
       type: object
-      required: [last_seen_visible, read_receipts, allow_group_invites, allow_private_messages, spellcheck_enabled, spellcheck_words, primary_color]
+      required: [last_seen_visible, read_receipts, allow_group_invites, allow_private_messages, spellcheck_enabled, spellcheck_words, primary_color, layout]
       properties:
         last_seen_visible:
           type: boolean
@@ -2268,6 +2306,25 @@ components:
             Accent color, one of the supported swatches. Clients derive
             dark-mode shades and derived palette steps from this hex. The
             default "#4f46e5" is returned when unset/reset.
+        layout:
+          type: string
+          enum: [instance, modern, classic]
+          description: >-
+            Interface layout. `instance` (default) follows the admin default
+            (`instance_layout`); `modern` / `classic` override it.
+        instance_layout:
+          type: string
+          enum: [modern, classic]
+          readOnly: true
+          description: Admin default layout (`/admin/ui-settings`); read-only, `modern` until set.
+
+    UISettings:
+      type: object
+      required: [default_layout]
+      properties:
+        default_layout:
+          type: string
+          enum: [modern, classic]
 
     UpdatePreferencesRequest:
       description: Partial update; omitted fields keep current values.
@@ -2293,6 +2350,9 @@ components:
           description: >-
             Empty string resets to the default (#4f46e5); any other value must
             be one of the supported swatch hexes (rejected with 400 validation).
+        layout:
+          type: string
+          enum: [instance, modern, classic]
       minProperties: 1
 
     AddContactRequest:
@@ -2393,6 +2453,27 @@ components:
         unread_count:
           type: integer
           description: Unread (un-read receipts) for the caller; present on room lists.
+        last_message:
+          type: object
+          description: Room lists only. Newest non-deleted message, for the sidebar row; absent in empty rooms.
+          required: [id, author_id, author_name, body, has_attachment, created_at]
+          properties:
+            id: { type: string }
+            author_id: { type: string }
+            author_name: { type: string }
+            body: { type: string, description: Truncated to 200 characters. }
+            has_attachment: { type: boolean }
+            created_at: { type: string, format: date-time }
+        first_unread_message_id:
+          type: string
+          description: Room lists only. Oldest message the caller has not read; absent when none (position for an "unread messages" divider).
+        peer_online:
+          type: boolean
+          description: >
+            Room lists, direct rooms only. True when the peer is connected and
+            has `last_seen_visible` on; absent otherwise (offline, unknown or
+            hidden are indistinguishable). Live changes arrive as
+            `presence.changed`.
         source:
           type: string
           description: >

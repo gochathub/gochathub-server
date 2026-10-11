@@ -58,3 +58,19 @@ func TestPrimaryColorSwatchContract(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestLayoutPreference(t *testing.T) {
+	if got := decodePrefs(nil).Layout; got != LayoutInstance {
+		t.Errorf("default layout = %q, want %q", got, LayoutInstance)
+	}
+	raw, _ := json.Marshal(MergePreferences(nil, model.PreferencesPatch{Layout: ptr("classic")}))
+	if got := decodePrefs(raw).Layout; got != "classic" {
+		t.Errorf("stored layout = %q, want classic", got)
+	}
+	if strings.Contains(string(raw), "instance_layout") {
+		t.Errorf("instance_layout must not be stored: %s", raw)
+	}
+	if got := MergePreferences(raw, model.PreferencesPatch{}).Layout; got != "classic" {
+		t.Errorf("absent patch changed layout to %q", got)
+	}
+}

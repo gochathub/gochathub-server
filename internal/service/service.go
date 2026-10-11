@@ -175,12 +175,16 @@ func init() {
 	}
 }
 
+// Layout values: users pick instance|modern|classic; the admin default is
+// modern|classic.
+const LayoutInstance = "instance"
+
 // decodePrefs tolerates malformed stored JSONB. Missing keys default to
 // functionality-on / privacy-off: last_seen and read receipts hidden until
 // opted in; group invites and private messages allowed until opted out
 // (ADR-013).
 func decodePrefs(raw []byte) model.Preferences {
-	defaults := model.Preferences{AllowGroupInvites: true, AllowPrivateMessages: true, SpellcheckWords: []string{}, PrimaryColor: PrimaryColorDefault}
+	defaults := model.Preferences{AllowGroupInvites: true, AllowPrivateMessages: true, SpellcheckWords: []string{}, PrimaryColor: PrimaryColorDefault, Layout: LayoutInstance}
 	p := defaults
 	if len(raw) == 0 || json.Unmarshal(raw, &p) != nil {
 		return defaults
@@ -190,6 +194,9 @@ func decodePrefs(raw []byte) model.Preferences {
 	}
 	if p.PrimaryColor == "" {
 		p.PrimaryColor = PrimaryColorDefault
+	}
+	if p.Layout == "" {
+		p.Layout = LayoutInstance
 	}
 	return p
 }
@@ -224,6 +231,9 @@ func MergePreferences(stored []byte, patch model.PreferencesPatch) model.Prefere
 	}
 	if patch.PrimaryColor != nil {
 		p.PrimaryColor = strings.ToLower(strings.TrimSpace(*patch.PrimaryColor)) // "" = reset
+	}
+	if patch.Layout != nil {
+		p.Layout = *patch.Layout
 	}
 	return p
 }

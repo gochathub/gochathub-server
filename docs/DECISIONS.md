@@ -209,3 +209,11 @@ Design in `docs/SIGNUP_INVITES_DESIGN.md`; requirements in `docs/SIGNUP_INVITES_
 - **Password rule (signup only)**: 12–128 characters, no composition rules.
 - **`users.username` uniqueness**: migration 008 adds the missing `UNIQUE` index (001 only had a CHECK, so the CLI's conflict path never fired). It fails if duplicates exist — resolve by hand.
 - **Not done (ponytail)**: async mail queue (send is synchronous, 15 s bound), HTML mail, per-invite role/rooms, Postmark sender.
+
+## ADR-027: Classic layout — per-user choice over an admin default
+
+- **Preferences**: `layout` (`instance` | `modern` | `classic`, default `instance`) lives in the user's preferences JSONB; no migration. `instance_layout` is the admin default, filled on every GET/PATCH response and never stored, so a client resolves the layout from one fetch.
+- **Admin default**: `GET|PUT /admin/ui-settings` (`default_layout`: modern | classic) in `app_config` key `ui.default_layout`; unset resolves to `modern`, so upgrading changes nothing. Admin only (403 otherwise).
+- **No WS event**: a changed default applies on the user's next preferences load.
+- **Room-list extras** (`GET /rooms` only, for the classic sidebar): `last_message` (newest non-deleted, body cut to 200 chars), `first_unread_message_id` (oldest unread for the caller; places the "unread messages" divider) and `peer_online` (direct rooms; true only when the peer is connected **and** has `last_seen_visible` on, so hidden/offline/unknown look the same). Computed with LATERAL joins in `ListRoomsForUser`; no schema change. Live presence changes still arrive as `presence.changed`.
+- **Known gap**: the `presence.changed` broadcast does not check the peer's `last_seen_visible`; only the snapshot above does. Closing it needs the hub to know preferences.

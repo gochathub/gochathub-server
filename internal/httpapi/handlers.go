@@ -269,6 +269,31 @@ func (a *API) handleGetPrefs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, prefs)
 }
 
+func (a *API) handleGetUISettings(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	v, err := a.svc.Users.GetUISettings(r.Context(), p)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (a *API) handlePutUISettings(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in model.UISettings
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	v, err := a.svc.Users.SetUISettings(r.Context(), p, in)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
 func (a *API) handlePatchPrefs(w http.ResponseWriter, r *http.Request) {
 	p, _ := principalFrom(r.Context())
 	var in model.PreferencesPatch

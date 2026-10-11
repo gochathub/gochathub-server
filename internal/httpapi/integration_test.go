@@ -557,6 +557,20 @@ func TestProfileVisibility(t *testing.T) {
 	}
 	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"primary_color": "#ff0000"}, 400)
 
+	// layout: user choice over an admin default (ADR-027)
+	lp := alice.do("GET", "/api/v1/users/me/preferences", nil, 200)
+	if lp["layout"] != "instance" || lp["instance_layout"] != "modern" {
+		t.Fatalf("default layout prefs: %v", lp)
+	}
+	lp = alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"layout": "classic"}, 200)
+	if lp["layout"] != "classic" || lp["instance_layout"] != "modern" {
+		t.Fatalf("patched layout prefs: %v", lp)
+	}
+	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"layout": "rocket"}, 400)
+	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"layout": "instance"}, 200)
+	alice.do("GET", "/api/v1/admin/ui-settings", nil, 403)
+	alice.do("PUT", "/api/v1/admin/ui-settings", map[string]string{"default_layout": "classic"}, 403)
+
 	// alice allows last_seen
 	alice.do("PATCH", "/api/v1/users/me/preferences", map[string]any{"last_seen_visible": true}, 200)
 	bobP = bob.do("GET", "/api/v1/users/"+aliceID, nil, 200)
