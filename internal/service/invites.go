@@ -48,6 +48,9 @@ func (is *InviteService) Create(ctx context.Context, p Principal, roomID, invite
 	if room.Type == string(model.RoomPublic) {
 		return "", bad("public rooms do not need invites")
 	}
+	if room.Source != "" { // mirrored rooms belong to their owner alone
+		return "", ErrForbidden
+	}
 	if role != "admin" && !p.IsAdmin() {
 		return "", ErrForbidden
 	}

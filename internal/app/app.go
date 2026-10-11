@@ -54,7 +54,9 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	svc.RC = bridge
+	if bridge != nil { // assign only when enabled: a typed-nil *Bridge would make svc.RC != nil
+		svc.RC = bridge
+	}
 	if cfg.TurnstileSecret != "" {
 		svc.Auth.VerifyCaptcha = (&service.Turnstile{Secret: cfg.TurnstileSecret, Hostname: cfg.TurnstileHostname}).Verify
 	}

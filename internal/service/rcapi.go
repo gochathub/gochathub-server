@@ -15,6 +15,7 @@ import (
 // LinkRequest is POST /integrations/rocket-chat/link: the user's RC userId
 // (or username) plus a Personal Access Token created in the RC workspace.
 type LinkRequest struct {
+	BaseURL  string `json:"base_url"` // the user's own workspace; empty = deployment default
 	RCUserID string `json:"rc_user_id"`
 	Token    string `json:"token"`
 }
@@ -22,6 +23,7 @@ type LinkRequest struct {
 // LinkStatus is GET/POST-link — the PAT is never echoed after the link call.
 type LinkStatus struct {
 	Linked     bool   `json:"linked"`
+	BaseURL    string `json:"base_url,omitempty"`
 	RCUserID   string `json:"rc_user_id,omitempty"`
 	RCUsername string `json:"rc_username,omitempty"`
 }

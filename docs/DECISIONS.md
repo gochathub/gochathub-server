@@ -168,3 +168,14 @@ Email attachments arrive as base64 inside the JSON body and are stored through t
 - **Send-through**: `chat.postMessage` with the user's PAT; local row is the RC echo's deterministic id, so the sync race with the echo dedupes by construction. Thread replies (`tmid`), edits/deletes back, reactions, attachments, `t=c` channels: out of scope v1, fail closed on the local side.
 - **Unlink** destroys the stored PAT (AES-256-GCM, key from `RC_PAT_KEY`, required whenever `RC_BASE_URL` is set); mirrored rooms remain as frozen local history.
 - **Read state stays one-way**: reading on RC does not propagate; receipts are local-only. Limits mirror webhook conventions (never log the PAT, never echo it).
+
+## ADR-024: Rocket.Chat bridge is per-user — own workspace URL, owner-keyed rows
+
+Amends ADR-023 after a review found server-wide state where the data belongs to one user.
+
+- **Per-user workspace**: `rocket_chat_links.base_url` (migration 006); `POST .../link` takes `base_url` (a deployment default `RC_BASE_URL` is optional). `RC_PAT_KEY` is now the feature switch. Every outbound call passes `push.CheckHost` (private-address rejection, `RC_ALLOW_HOSTS` allow-list, no redirects) because the URL is user input; endpoint-name caches are keyed per workspace.
+- **Owner-keyed rows**: room/message/shadow-user ids = uuidv5(owner, workspace, remote id) (`rcbridge.rcID`). No row is shared between users — fixes the second user never joining a shared room, per-room watermarks shared across users, and one user's remote contacts leaking to others. Shadow accounts (`password_hash '!'`) are excluded from user search. Mirrored rooms refuse member adds/invites (they post through the owner's token; `Send` also requires `created_by = caller`).
+- **Unlink hides**: `DeleteRCLink` destroys the PAT and archives the owner's mirrored rooms in one transaction; history is kept and a re-link restores the same rooms (deterministic ids).
+- **Import continuity dropped**: live ids no longer share the `rcmigrate` namespaces, so an imported workspace is not adopted by the bridge (it would also pin the id to a single owner). Revisit with an explicit adopt step if needed.
+- **Bugs fixed**: delta pulls re-fetched the full window (`source_synced_at` was never read back); DM history called `groups.history` (type compared as `"d"` against `"direct"`); `svc.RC` was a typed-nil interface when disabled.
+- **Not done (ponytail)**: delete-my-mirror, per-user sync interval / type filters, per-workspace workers, HKDF per-user token keys.

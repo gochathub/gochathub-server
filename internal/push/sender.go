@@ -214,6 +214,13 @@ func (s *Sender) send(ctx context.Context, e store.PushEndpointRow, body []byte,
 	return resp.StatusCode, nil
 }
 
+// CheckHost is the shared outbound SSRF guard for user-supplied URLs (also
+// used by the Rocket.Chat bridge): http(s) only, resolves the host and rejects
+// non-global addresses unless the host is allow-listed.
+func CheckHost(ctx context.Context, rawURL string, allowHosts []string) error {
+	return checkEndpointHost(ctx, rawURL, allowHosts)
+}
+
 // checkEndpointHost resolves the endpoint and rejects non-global addresses —
 // for every send, after resolution, per UNC §3.4.
 func checkEndpointHost(ctx context.Context, rawEndpoint string, allowHosts []string) error {

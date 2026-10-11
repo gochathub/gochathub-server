@@ -77,10 +77,12 @@ func (s *Store) UserByUsername(ctx context.Context, username string) (UserRow, e
 }
 
 // SearchUsers finds enabled users by username or display-name substring.
+// Non-login shadow accounts (password_hash '!': bridged remote contacts,
+// webhook bots) are private to their owner's rooms and never searchable.
 func (s *Store) SearchUsers(ctx context.Context, q string, limit int) ([]UserRow, error) {
 	rows, err := s.Q.Query(ctx, `
 		SELECT `+userCols+` FROM users u
-		WHERE u.enabled AND (u.username ILIKE $1 ESCAPE '\' OR u.display_name ILIKE $1 ESCAPE '\')
+		WHERE u.enabled AND u.password_hash <> '!' AND (u.username ILIKE $1 ESCAPE '\' OR u.display_name ILIKE $1 ESCAPE '\')
 		ORDER BY u.username LIMIT $2`,
 		"%"+escapeLike(q)+"%", limit)
 	if err != nil {

@@ -1,7 +1,7 @@
-// Package rcbridge mirrors a live Rocket.Chat workspace into local rooms
-// (docs/ROCKETCHAT-INTEGRATION.md): per-user Personal Access Token
-// delegation, subscriptions delta polling, persistence in the shared uuidv5
-// id space (import continuity with rcmigrate), and send-through via
+// Package rcbridge mirrors a user's live Rocket.Chat workspace into local
+// rooms (docs/ROCKETCHAT-INTEGRATION.md, ADR-024): per-user workspace URL and
+// Personal Access Token, subscriptions delta polling, per-owner mirrored rows
+// (ids derive from owner + workspace + remote id), and send-through via
 // chat.postMessage.
 package rcbridge
 
@@ -11,6 +11,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,51 +23,54 @@ import (
 
 	"github.com/gochathub/gochathub-server/internal/config"
 	"github.com/gochathub/gochathub-server/internal/model"
-	"github.com/gochathub/gochathub-server/internal/rcids"
 	"github.com/gochathub/gochathub-server/internal/service"
 	"github.com/gochathub/gochathub-server/internal/store"
 	"github.com/google/uuid"
 )
 
-// Bridge runs the Rocket.Chat live integration for the whole process.
-// Zero-value fields beyond App are set by New; nil Bridge (no RC_BASE_URL)
-// means the feature is disabled everywhere.
+// Bridge runs the Rocket.Chat live integration for the whole process; the
+// workspace URL and credentials live on each user's link. A nil Bridge
+// (RC_PAT_KEY unset) means the feature is disabled everywhere.
 type Bridge struct {
-	App      *service.App
-	BaseURL  string // workspace origin, no trailing slash
-	PatKey   [32]byte
-	Interval time.Duration
-	HTTP     *http.Client
-	Log      *slog.Logger
+	App         *service.App
+	DefaultBase string // optional RC_BASE_URL offered when a link omits one
+	AllowHosts  []string
+	PatKey      [32]byte
+	Interval    time.Duration
+	HTTP        *http.Client
+	Log         *slog.Logger
 
-	mu       sync.Mutex
-	listPath string
-	histPath string
+	mu    sync.Mutex
+	paths map[string]string // learned endpoint names per (kind, workspace)
 }
 
 // New builds the bridge; nil, nil when the integration is disabled.
 func New(app *service.App, cfg *config.Config, log *slog.Logger) (*Bridge, error) {
-	if cfg.RCBaseURL == "" {
+	if cfg.RCPatKey == "" {
 		return nil, nil
 	}
-	if _, err := url.Parse(cfg.RCBaseURL); err != nil {
-		return nil, fmt.Errorf("rc bridge: %w", err)
-	}
 	return &Bridge{
-		App:      app,
-		BaseURL:  strings.TrimRight(cfg.RCBaseURL, "/"),
-		PatKey:   sha256.Sum256([]byte(cfg.RCPatKey)),
-		Interval: max(10*time.Second, cfg.RCLinkSync),
-		HTTP:     &http.Client{Timeout: 15 * time.Second},
-		Log:      log,
+		App:         app,
+		DefaultBase: cfg.RCBaseURL,
+		AllowHosts:  cfg.RCAllowHosts,
+		PatKey:      sha256.Sum256([]byte(cfg.RCPatKey)),
+		Interval:    max(10*time.Second, cfg.RCLinkSync),
+		HTTP: &http.Client{
+			Timeout: 15 * time.Second,
+			// the API never redirects; following one would sidestep the host guard
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+		Log:   log,
+		paths: map[string]string{},
 	}, nil
 }
 
 // Run polls every linked account until ctx ends. One goroutine total; links
-// are processed sequentially — a shared REST rate-limit budget at the RC
-// workspace makes fan-out counterproductive.
+// are processed sequentially.
+// ponytail: a slow or rate-limited workspace delays the rest of the pass —
+// per-workspace worker pools if links grow past a few dozen.
 func (b *Bridge) Run(ctx context.Context) {
-	b.Log.Info("rocket.chat bridge started", "interval", b.Interval.String(), "base_url", b.BaseURL)
+	b.Log.Info("rocket.chat bridge started", "interval", b.Interval.String())
 	t := time.NewTicker(b.Interval)
 	defer t.Stop()
 	for {
@@ -113,20 +117,27 @@ func (b *Bridge) Link(ctx context.Context, p service.Principal, in service.LinkR
 	if uid == "" || len(pat) < 16 {
 		return service.LinkStatus{}, service.Bad("rc_user_id (or username) and a Personal Access Token are required")
 	}
-	user, err := b.whoami(ctx, pat, uid)
+	base, err := normalizeBase(in.BaseURL, b.DefaultBase)
 	if err != nil {
+		return service.LinkStatus{}, err
+	}
+	user, err := b.whoami(ctx, target{base: base, pat: pat, uid: uid})
+	if err != nil {
+		if isGuardErr(err) {
+			return service.LinkStatus{}, service.Bad("%s", err.Error())
+		}
 		return service.LinkStatus{}, err
 	}
 	enc, err := b.sealPat([]byte(pat))
 	if err != nil {
 		return service.LinkStatus{}, fmt.Errorf("seal pat: %w", err)
 	}
-	l := store.RCLink{UserID: p.UserID, RCUserID: user.ID, RCUsername: user.Username, PatEnc: enc}
+	l := store.RCLink{UserID: p.UserID, BaseURL: base, RCUserID: user.ID, RCUsername: user.Username, PatEnc: enc}
 	if err := b.App.Store.InsertRCLink(ctx, &l); err != nil {
 		return service.LinkStatus{}, fmt.Errorf("store link: %w", err)
 	}
 	_ = b.App.Store.Audit(ctx, p.UserID, "rocket_chat.link", "rocket_chat_link", p.UserID,
-		[]byte(`{"rc_user_id":"`+user.ID+`","rc_username":"`+user.Username+`"}`), nil)
+		[]byte(`{"base_url":`+jsonStr(base)+`,"rc_user_id":`+jsonStr(user.ID)+`}`), nil)
 	// first sync off the request path; errors only logged
 	go func() {
 		bg := context.WithoutCancel(ctx)
@@ -134,7 +145,33 @@ func (b *Bridge) Link(ctx context.Context, p service.Principal, in service.LinkR
 			b.Log.Warn("rc bridge: first sync failed", "user", p.UserID, "err", err)
 		}
 	}()
-	return service.LinkStatus{Linked: true, RCUserID: l.RCUserID, RCUsername: l.RCUsername}, nil
+	return linkStatus(l), nil
+}
+
+func linkStatus(l store.RCLink) service.LinkStatus {
+	return service.LinkStatus{Linked: true, BaseURL: l.BaseURL, RCUserID: l.RCUserID, RCUsername: l.RCUsername}
+}
+
+// normalizeBase reduces a user-supplied workspace URL to scheme://host[:port]
+// (no path, query, userinfo). Empty falls back to the deployment default.
+func normalizeBase(raw, def string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = def
+	}
+	if raw == "" {
+		return "", service.Bad("base_url is required")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil {
+		return "", service.Bad("base_url must be an http(s) workspace origin")
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
+func jsonStr(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // Status reports the caller's link without ever echoing the PAT.
@@ -146,11 +183,11 @@ func (b *Bridge) Status(ctx context.Context, p service.Principal) (service.LinkS
 	if err != nil {
 		return service.LinkStatus{}, err
 	}
-	return service.LinkStatus{Linked: true, RCUserID: l.RCUserID, RCUsername: l.RCUsername}, nil
+	return linkStatus(l), nil
 }
 
-// Unlink destroys the stored PAT. Mirrored rooms and their content stay as
-// frozen local history (US-4 open question chose "keep").
+// Unlink destroys the stored PAT and hides the user's mirrored rooms
+// (archived, not deleted: a re-link brings the same rooms back).
 func (b *Bridge) Unlink(ctx context.Context, p service.Principal) error {
 	err := b.App.Store.DeleteRCLink(ctx, p.UserID)
 	if err != nil {
@@ -172,7 +209,8 @@ func (b *Bridge) syncUser(ctx context.Context, l store.RCLink) error {
 	if l.Watermark != nil {
 		since = l.Watermark
 	}
-	changed, removed, err := b.listSubs(ctx, pat, l.RCUserID, since)
+	t := target{base: l.BaseURL, pat: pat, uid: l.RCUserID}
+	changed, removed, err := b.listSubs(ctx, t, since)
 	if err != nil {
 		var ae AuthError
 		if errors.As(err, &ae) {
@@ -197,13 +235,13 @@ func (b *Bridge) syncUser(ctx context.Context, l store.RCLink) error {
 	}
 	for _, r := range removed {
 		if r.RID != "" {
-			if err := b.App.Store.ArchiveRCRoom(ctx, r.RID); err != nil {
+			if err := b.App.Store.ArchiveRCRoom(ctx, rcID("room", l, r.RID)); err != nil {
 				b.Log.Warn("rc bridge: archive on remove failed", "rid", r.RID, "err", err)
 			}
 		}
 	}
 	for _, s := range dirty {
-		if err := b.syncRoom(ctx, l, pat, s); err != nil {
+		if err := b.syncRoom(ctx, l, t, s); err != nil {
 			var ae AuthError
 			if errors.As(err, &ae) {
 				return err
@@ -221,23 +259,25 @@ func (b *Bridge) syncUser(ctx context.Context, l store.RCLink) error {
 
 // syncRoom ensures the local room exists (backfilling when fresh) and pulls
 // new messages when RC reports newer activity than our last pull.
-func (b *Bridge) syncRoom(ctx context.Context, l store.RCLink, pat string, s rcSub) error {
+func (b *Bridge) syncRoom(ctx context.Context, l store.RCLink, t target, s rcSub) error {
 	room, fresh, err := b.ensureRoom(ctx, l, s)
 	if err != nil {
 		return err
 	}
-	return b.pullRoom(ctx, l, pat, room, room.SourceSyncedAt, fresh)
+	return b.pullRoom(ctx, l, t, room, room.SourceSyncedAt, fresh)
 }
 
-// ensureRoom maps the subscription to a local room via the shared nsRoom id
-// space; fresh = first sighting.
+// ensureRoom maps the subscription to this owner's local room (ids derive from
+// owner + workspace + remote id, so no row is ever shared between users);
+// fresh = first sighting. The owner is (re)joined every time: membership is
+// idempotent and an unlinked-then-relinked room must stay visible.
 func (b *Bridge) ensureRoom(ctx context.Context, l store.RCLink, s rcSub) (store.RoomRow, bool, error) {
 	if s.T == "d" && s.Name == "" {
 		return store.RoomRow{}, false, errors.New("dm subscription has no counterpart name")
 	}
 	name := s.Name
 	room := store.RoomRow{
-		ID:        idRoom(s.RID),
+		ID:        rcID("room", l, s.RID),
 		Type:      "direct",
 		Source:    store.SrcRocketChat,
 		SourceRID: s.RID,
@@ -251,10 +291,8 @@ func (b *Bridge) ensureRoom(ctx context.Context, l store.RCLink, s rcSub) (store
 	if err != nil {
 		return store.RoomRow{}, false, err
 	}
-	if fresh {
-		if err := b.App.Store.AddRCRoomMember(ctx, room.ID, l.UserID); err != nil {
-			return store.RoomRow{}, false, fmt.Errorf("join link owner: %w", err)
-		}
+	if err := b.App.Store.AddRCRoomMember(ctx, room.ID, l.UserID); err != nil {
+		return store.RoomRow{}, false, fmt.Errorf("join link owner: %w", err)
 	}
 	return room, fresh, nil
 }
@@ -262,8 +300,8 @@ func (b *Bridge) ensureRoom(ctx context.Context, l store.RCLink, s rcSub) (store
 // pullRoom fetches messages (oldest, latest] newest-first and inserts them.
 // fresh also stamps the link owner's receipts read so a fresh link opens with
 // zero noise; later deliveries stay unread until read here.
-func (b *Bridge) pullRoom(ctx context.Context, l store.RCLink, pat string, room store.RoomRow, oldest *time.Time, fresh bool) error {
-	msgs, err := b.history(ctx, pat, l.RCUserID, room.SourceRID, room.Type, oldest)
+func (b *Bridge) pullRoom(ctx context.Context, l store.RCLink, t target, room store.RoomRow, oldest *time.Time, fresh bool) error {
+	msgs, err := b.history(ctx, t, room.SourceRID, room.Type, oldest)
 	if err != nil {
 		return err
 	}
@@ -310,13 +348,13 @@ func (b *Bridge) insertRcMsg(ctx context.Context, l store.RCLink, room store.Roo
 	}
 	var reply *string
 	if m.TMID != "" {
-		replyTo := idMsg(m.TMID)
+		replyTo := rcID("msg", l, m.TMID)
 		if ref, rerr := b.App.Store.MessageByID(ctx, replyTo); rerr == nil && ref.RoomID == room.ID {
 			reply = &replyTo
 		}
 	}
 	row := store.MessageRow{
-		ID:               idMsg(m.ID),
+		ID:               rcID("msg", l, m.ID),
 		RoomID:           room.ID,
 		AuthorID:         authorID,
 		ReplyToMessageID: reply,
@@ -349,17 +387,17 @@ func (b *Bridge) stubOrSelf(ctx context.Context, l store.RCLink, room store.Room
 	if u.ID == l.RCUserID {
 		return l.UserID, nil
 	}
-	name := sanitizeName(u.Username)
-	if _, err := b.App.Store.UpsertStubUser(ctx, idUser(u.ID), name); err != nil {
+	stub := rcID("user", l, u.ID)
+	if err := b.App.Store.UpsertStubUser(ctx, stub, sanitizeName(u.Username)); err != nil {
 		return "", err
 	}
 	// DM shadow member so members-listing renders the conversation normally
 	if room.Type == "direct" {
-		if err := b.App.Store.AddRCRoomMember(ctx, room.ID, idUser(u.ID)); err != nil {
+		if err := b.App.Store.AddRCRoomMember(ctx, room.ID, stub); err != nil {
 			return "", err
 		}
 	}
-	return idUser(u.ID), nil
+	return stub, nil
 }
 
 // sanitizeName coerces an RC username into the local users.username rules
@@ -390,7 +428,8 @@ func (b *Bridge) Send(ctx context.Context, p service.Principal, roomID string, i
 	if err != nil {
 		return model.Message{}, service.ErrNotFound
 	}
-	if room.Source != store.SrcRocketChat || room.SourceRID == "" {
+	// only the owner's own mirror can post through the owner's link
+	if room.Source != store.SrcRocketChat || room.SourceRID == "" || room.CreatedBy != p.UserID {
 		return model.Message{}, service.ErrNotFound
 	}
 	if in.ReplyToID != "" {
@@ -407,11 +446,14 @@ func (b *Bridge) Send(ctx context.Context, p service.Principal, roomID string, i
 	if err != nil {
 		return model.Message{}, service.Bad("stored rocket.chat token unreadable — link again")
 	}
-	echo, err := b.postMessage(ctx, pat, l.RCUserID, room.SourceRID, in.Body)
+	echo, err := b.postMessage(ctx, target{base: l.BaseURL, pat: pat, uid: l.RCUserID}, room.SourceRID, in.Body)
 	if err != nil {
 		var ae AuthError
 		if errors.As(err, &ae) {
 			return model.Message{}, service.Bad("rocket.chat rejected the stored token — re-link required")
+		}
+		if isGuardErr(err) {
+			return model.Message{}, service.Bad("%s", err.Error())
 		}
 		return model.Message{}, fmt.Errorf("rc post: %w", err)
 	}
@@ -419,7 +461,7 @@ func (b *Bridge) Send(ctx context.Context, p service.Principal, roomID string, i
 		return model.Message{}, errors.New("rc post: response without message id")
 	}
 	row := store.MessageRow{
-		ID:        idMsg(echo.ID),
+		ID:        rcID("msg", l, echo.ID),
 		RoomID:    room.ID,
 		AuthorID:  p.UserID, // the local account, not a stub: it is really them
 		Body:      in.Body,
@@ -443,18 +485,18 @@ func (b *Bridge) Send(ctx context.Context, p service.Principal, roomID string, i
 	return msg, nil
 }
 
-// --- id space (identical to the one-shot import) ---
+// --- id space ---
 
-func idUser(rcUID string) string {
-	return uuid.NewSHA1(uuid.NewSHA1(uuid.NameSpaceURL, []byte(rcids.NSUser)), []byte(rcUID)).String()
-}
+var nsBridge = uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://gochathub.app/bridge/rc"))
 
-func idRoom(rid string) string {
-	return uuid.NewSHA1(uuid.NewSHA1(uuid.NameSpaceURL, []byte(rcids.NSRoom)), []byte(rid)).String()
-}
-
-func idMsg(mid string) string {
-	return uuid.NewSHA1(uuid.NewSHA1(uuid.NameSpaceURL, []byte(rcids.NSMsg)), []byte(mid)).String()
+// rcID derives the local id of a mirrored room/message/shadow user from the
+// link owner, the owner's workspace and the remote id: deterministic (a
+// re-sync or re-link lands on the same rows) and unique per owner, so mirrored
+// data is never shared between users and two workspaces can't collide.
+// Deliberately NOT the rcmigrate namespaces (ADR-024): imported rows are not
+// adopted by the live bridge.
+func rcID(kind string, l store.RCLink, remote string) string {
+	return uuid.NewSHA1(nsBridge, []byte(kind+"|"+l.UserID+"|"+l.BaseURL+"|"+remote)).String()
 }
 
 // sealPat / openPat: AES-256-GCM with the env-provided key.
@@ -479,7 +521,10 @@ func (b *Bridge) openPat(enc []byte) (string, error) {
 	if aerr != nil {
 		return "", aerr
 	}
-	aead, err := cipher.NewGCM(gcm)
+	aead, gerr := cipher.NewGCM(gcm)
+	if gerr != nil {
+		return "", gerr
+	}
 	if len(enc) < aead.NonceSize() {
 		return "", errors.New("pat: too short")
 	}

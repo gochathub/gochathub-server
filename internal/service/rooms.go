@@ -241,6 +241,9 @@ func (rs *RoomService) AddMember(ctx context.Context, p Principal, roomID, userI
 	if err != nil {
 		return ErrNotFound
 	}
+	if room.Source != "" { // mirrored rooms belong to their owner alone
+		return ErrForbidden
+	}
 	if room.Type != string(model.RoomPublic) {
 		role, err := rs.App.Store.MemberRole(ctx, roomID, p.UserID)
 		if err != nil {

@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -62,6 +61,8 @@ type fakeRC struct {
 	uid       string
 	username  string
 	tsCounter int
+
+	histWithOldest int // history pulls that carried an `oldest` bound (delta pulls)
 }
 
 type postedMsg struct {
@@ -121,9 +122,12 @@ func newFakeRC(t *testing.T, rcUser, uname string) *fakeRC {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "update": up, "remove": []rcSub{}})
 	})
 
-	for _, name := range []string{"dm.history", "im.history", "groups.history"} {
-		mux.HandleFunc("GET /api/v1/"+name, rcHistory(f))
+	// like the real server: DM rooms are only readable via dm/im.history,
+	// private groups only via groups.history
+	for _, name := range []string{"dm.history", "im.history"} {
+		mux.HandleFunc("GET /api/v1/"+name, rcHistory(f, "d"))
 	}
+	mux.HandleFunc("GET /api/v1/groups.history", rcHistory(f, "p"))
 
 	mux.HandleFunc("POST /api/v1/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -144,13 +148,22 @@ func newFakeRC(t *testing.T, rcUser, uname string) *fakeRC {
 	return f
 }
 
-func rcHistory(f *fakeRC) http.HandlerFunc {
+func rcHistory(f *fakeRC, kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		q := r.URL.Query()
 		rid := q.Get("roomId")
 		var out []rcMsg
 		f.mu.Lock()
+		if f.subs[rid].T != kind {
+			f.mu.Unlock()
+			w.WriteHeader(400)
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "error-room-not-found"})
+			return
+		}
+		if q.Get("oldest") != "" {
+			f.histWithOldest++
+		}
 		for _, m := range f.msgs[rid] {
 			if m.TS.Time.Before(orTS(q.Get("oldest"))) || m.TS.Time.After(orTS(q.Get("latest"))) {
 				continue
@@ -227,7 +240,8 @@ func bootBridge(t *testing.T, st *store.Store, base string) (*service.App, *Brid
 	hub.App = svc
 	svc.Notify = hub
 	sender.ActiveIn = hub.SubscribedToRoom
-	b, err := New(svc, &config.Config{RCBaseURL: base, RCPatKey: "test-integration-key"}, log)
+	// 127.0.0.1 allow-listed: the fake workspace is a loopback httptest server
+	b, err := New(svc, &config.Config{RCBaseURL: base, RCPatKey: "test-integration-key", RCAllowHosts: []string{"127.0.0.1"}}, log)
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
@@ -289,7 +303,7 @@ func TestBridgeLinkSyncSendUnlink(t *testing.T) {
 	f.addMsg("ridDM", "and my own RC client message", f.uid, f.username, "")
 	f.addMsg("ridGroup", "standup notes", "rcUserIdBob", "bober", "")
 
-	stt, err := b.Link(ctx, p, service.LinkRequest{RCUserID: f.uid, Token: testPAT})
+	stt, err := b.Link(ctx, p, service.LinkRequest{BaseURL: f.srv.URL, RCUserID: f.uid, Token: testPAT})
 	if err != nil {
 		t.Fatalf("link: %v", err)
 	}
@@ -344,16 +358,9 @@ func TestBridgeLinkSyncSendUnlink(t *testing.T) {
 		t.Fatalf("group name: %+v", group.Name)
 	}
 
-	// id space continuity: namespace strings hard-coded against rcids —
-	// editing them breaks this test, which is the point. The namespaces are
-	// uuidv5 roots derived from the import URL constants, as in migrate.
-	nsMsg := uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://gochathub.app/migrate/rc/msg"))
-	nsRoom := uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://gochathub.app/migrate/rc/room"))
-	if got := idMsg("RMsg001"); got != uuid.NewSHA1(nsMsg, []byte("RMsg001")).String() {
-		t.Fatal("message id namespace drifted from the import")
-	}
-	if idRoom("ridDM") != uuid.NewSHA1(nsRoom, []byte("ridDM")).String() {
-		t.Fatal("room id namespace drifted from the import")
+	// ids are per owner + workspace + remote id (ADR-024)
+	if dm.ID != rcID("room", link, "ridDM") {
+		t.Fatalf("dm room id %s not owner-derived", dm.ID)
 	}
 
 	page, err := svc.Messages.List(ctx, p, dm.ID, "", "", 50)
@@ -370,7 +377,7 @@ func TestBridgeLinkSyncSendUnlink(t *testing.T) {
 				t.Fatalf("own author rendered as %q", m.Author.Username)
 			}
 		case "hello from bober":
-			if m.AuthorID != idUser("rcUserIdBob") {
+			if m.AuthorID != rcID("user", link, "rcUserIdBob") {
 				t.Fatalf("bober message attributed to %s", m.AuthorID)
 			}
 			if m.Author.Username != "bober" {
@@ -392,7 +399,7 @@ func TestBridgeLinkSyncSendUnlink(t *testing.T) {
 	}
 	deltaLanded := false
 	for _, m := range page.Items {
-		if m.ID == idMsg(m4.ID) {
+		if m.ID == rcID("msg", link, m4.ID) {
 			deltaLanded = true
 		}
 	}
@@ -415,7 +422,7 @@ func TestBridgeLinkSyncSendUnlink(t *testing.T) {
 	if len(received) != 1 || received[0].RoomID != "ridDM" || received[0].Text != "replied from gochathub" {
 		t.Fatalf("rc never received the send: %+v", received)
 	}
-	if msg.ID != idMsg(lastEchoOf(t, f, "ridDM")) {
+	if msg.ID != rcID("msg", link, lastEchoOf(t, f, "ridDM")) {
 		t.Fatalf("send row id %s is not the RC echo-derived id", msg.ID)
 	}
 	if page, _ := svc.Messages.List(ctx, p, dm.ID, "", "gochathub", 10); len(page.Items) != 1 {
@@ -430,7 +437,15 @@ func TestBridgeLinkSyncSendUnlink(t *testing.T) {
 		t.Fatal("attachment should be rejected")
 	}
 
-	// unlink: PAT destroyed, mirrored rooms remain as frozen history
+	// delta pulls must be bounded by the stored watermark, not re-fetch the window
+	f.mu.Lock()
+	if f.histWithOldest == 0 {
+		f.mu.Unlock()
+		t.Fatal("delta history pull never carried an `oldest` bound")
+	}
+	f.mu.Unlock()
+
+	// unlink: PAT destroyed, rooms hidden (archived, history kept)
 	if err := svc.RC.Unlink(ctx, p); err != nil {
 		t.Fatalf("unlink: %v", err)
 	}
@@ -440,8 +455,106 @@ func TestBridgeLinkSyncSendUnlink(t *testing.T) {
 	if stt, err := svc.RC.Status(ctx, p); err != nil || stt.Linked {
 		t.Fatalf("status after unlink: %+v %v", stt, err)
 	}
-	if rooms, _ = svc.Rooms.List(ctx, p); len(rooms) != 2 {
-		t.Fatalf("rooms after unlink: %d", len(rooms))
+	if rooms, _ = svc.Rooms.List(ctx, p); len(rooms) != 0 {
+		t.Fatalf("rooms visible after unlink: %d", len(rooms))
+	}
+	if n := countRows(t, st, "SELECT count(*) FROM messages WHERE room_id = '"+dm.ID+"'"); n == 0 {
+		t.Fatal("unlink deleted history; it must only hide it")
+	}
+
+	// re-link: same rooms come back, history intact, nothing duplicated
+	if _, err := b.Link(ctx, p, service.LinkRequest{BaseURL: f.srv.URL, RCUserID: f.uid, Token: testPAT}); err != nil {
+		t.Fatalf("relink: %v", err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if rooms, _ = svc.Rooms.List(ctx, p); len(rooms) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rooms did not reappear after relink: %d", len(rooms))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if page, _ := svc.Messages.List(ctx, p, directRoomOf(t, rooms).ID, "", "", 50); len(page.Items) != 4 {
+		t.Fatalf("history after relink: want 4, got %d", len(page.Items))
+	}
+}
+
+// TestBridgeIsolatedPerUser: two local users linked to the same workspace get
+// their own rooms/messages/shadow accounts; shadows are not searchable; mirrored
+// rooms accept no extra members; a private workspace URL is refused.
+func TestBridgeIsolatedPerUser(t *testing.T) {
+	st, closeDB := testStore(t)
+	defer closeDB()
+	ctx := context.Background()
+
+	f := newFakeRC(t, "rcUserIdOwner", "rcowner")
+	svc, b := bootBridge(t, st, "")
+
+	alice, err := svc.Users.CreateUser(ctx, "alice", "Alice", "a@test.invalid", "pw-a", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	carol, err := svc.Users.CreateUser(ctx, "carol", "Carol", "c@test.invalid", "pw-c", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pa := service.Principal{UserID: alice.ID, Kind: "session"}
+	pc := service.Principal{UserID: carol.ID, Kind: "session"}
+
+	f.registerSub("ridShared", "p", "shared group")
+	f.addMsg("ridShared", "hi all", "rcUserIdBob", "bober", "")
+
+	for _, p := range []service.Principal{pa, pc} {
+		if _, err := b.Link(ctx, p, service.LinkRequest{BaseURL: f.srv.URL, RCUserID: f.uid, Token: testPAT}); err != nil {
+			t.Fatalf("link %s: %v", p.UserID, err)
+		}
+	}
+	waitRooms := func(p service.Principal) []model.Room {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			rooms := mustRooms(t, svc, p)
+			if len(rooms) == 1 {
+				if page, _ := svc.Messages.List(ctx, p, rooms[0].ID, "", "", 10); len(page.Items) == 1 {
+					return rooms
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("user %s never got the mirrored room", p.UserID)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	ra, rc := waitRooms(pa)[0], waitRooms(pc)[0]
+	if ra.ID == rc.ID {
+		t.Fatal("two users share one mirrored room")
+	}
+	// alice cannot read carol's mirror
+	if _, err := svc.Rooms.Get(ctx, pa, rc.ID); err == nil {
+		t.Fatal("alice can read carol's mirrored room")
+	}
+	if _, err := svc.Messages.List(ctx, pa, rc.ID, "", "", 10); err == nil {
+		t.Fatal("alice can list carol's mirrored messages")
+	}
+	// shadow accounts exist per owner but are not searchable
+	if n := countRows(t, st, "SELECT count(*) FROM users WHERE username LIKE 'bober%'"); n != 2 {
+		t.Fatalf("want one shadow per owner (2), got %d", n)
+	}
+	if found, err := svc.Users.Search(ctx, "bober", 10); err != nil || len(found) != 0 {
+		t.Fatalf("shadow accounts searchable: %v %v", found, err)
+	}
+	// nobody can be added to a mirror (it posts through the owner's token)
+	if err := svc.Rooms.AddMember(ctx, pa, ra.ID, carol.ID); err == nil {
+		t.Fatal("added a member to a mirrored room")
+	}
+	// private/internal workspace URLs are refused unless allow-listed
+	b.AllowHosts = nil
+	if _, err := b.Link(ctx, pa, service.LinkRequest{BaseURL: "http://10.0.0.5", RCUserID: "x", Token: testPAT}); err == nil {
+		t.Fatal("private workspace URL accepted")
+	}
+	if _, err := b.Link(ctx, pa, service.LinkRequest{BaseURL: f.srv.URL, RCUserID: f.uid, Token: testPAT}); err == nil {
+		t.Fatal("loopback workspace URL accepted without allow-list")
 	}
 }
 
@@ -470,7 +583,7 @@ func TestStampSemanticsAfterBackfill(t *testing.T) {
 	f.registerSub("ridX", "d", "xpeer")
 	f.addMsg("ridX", "one", "rcUB", "xpeer", "")
 
-	if _, err := b.Link(ctx, p, service.LinkRequest{RCUserID: f.uid, Token: testPAT}); err != nil {
+	if _, err := b.Link(ctx, p, service.LinkRequest{BaseURL: f.srv.URL, RCUserID: f.uid, Token: testPAT}); err != nil {
 		t.Fatalf("link: %v", err)
 	}
 	deadline := time.Now().Add(5 * time.Second)

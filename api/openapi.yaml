@@ -1138,8 +1138,8 @@ paths:
       security: [{ bearerAuth: [] }]
       operationId: unlinkRocketChat
       description: |
-        Unlink: the stored PAT is destroyed. Rooms already mirrored remain as
-        frozen local history and stop syncing.
+        Unlink: the stored PAT is destroyed and the caller's mirrored rooms are
+        hidden (archived; history is kept, and re-linking restores them).
       responses:
         "204":
           description: Unlinked
@@ -1312,6 +1312,12 @@ components:
       type: object
       required: [rc_user_id, token]
       properties:
+        base_url:
+          type: string
+          description: |
+            The user's own Rocket.Chat workspace origin (https://chat.example.com).
+            Optional when the deployment configures a default. Private/internal
+            addresses are rejected unless the host is allow-listed server-side.
         rc_user_id:
           type: string
           description: |
@@ -1326,6 +1332,9 @@ components:
       properties:
         linked:
           type: boolean
+        base_url:
+          type: string
+          description: The workspace this account is linked to; set when linked.
         rc_user_id:
           type: string
           description: The resolved RC userId; set when linked.

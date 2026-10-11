@@ -18,6 +18,7 @@ const SrcRocketChat = "rocket_chat"
 // PatEnc is AES-GCM ciphertext; only the bridge decrypts it.
 type RCLink struct {
 	UserID     string
+	BaseURL    string // the user's own workspace origin
 	RCUserID   string
 	RCUsername string
 	PatEnc     []byte
@@ -25,25 +26,18 @@ type RCLink struct {
 	CreatedAt  time.Time
 }
 
-const linkCols = `l.user_id, l.rc_user_id, l.rc_username, l.pat_enc, l.watermark, l.created_at`
-
 // InsertRCLink creates or replaces the caller's link (deleted rows revive;
 // a re-link restarts the watermark from scratch).
 func (s *Store) InsertRCLink(ctx context.Context, l *RCLink) error {
 	return s.Q.QueryRow(ctx, `
-		INSERT INTO rocket_chat_links (user_id, rc_user_id, rc_username, pat_enc, watermark)
-		VALUES ($1, $2, $3, $4, NULL)
+		INSERT INTO rocket_chat_links (user_id, base_url, rc_user_id, rc_username, pat_enc, watermark)
+		VALUES ($1, $2, $3, $4, $5, NULL)
 		ON CONFLICT (user_id) DO UPDATE SET
-			rc_user_id = EXCLUDED.rc_user_id, rc_username = EXCLUDED.rc_username,
-			pat_enc = EXCLUDED.pat_enc, watermark = NULL, deleted_at = NULL
+			base_url = EXCLUDED.base_url, rc_user_id = EXCLUDED.rc_user_id,
+			rc_username = EXCLUDED.rc_username, pat_enc = EXCLUDED.pat_enc,
+			watermark = NULL, deleted_at = NULL
 		RETURNING created_at`,
-		l.UserID, l.RCUserID, l.RCUsername, l.PatEnc).Scan(&l.CreatedAt)
-}
-
-// SetRCLinkUsername updates the denormalized display name from users.info.
-func (s *Store) SetRCLinkUsername(ctx context.Context, userID, username string) error {
-	_, err := s.Q.Exec(ctx, `UPDATE rocket_chat_links SET rc_username = $2 WHERE user_id = $1`, userID, username)
-	return err
+		l.UserID, l.BaseURL, l.RCUserID, l.RCUsername, l.PatEnc).Scan(&l.CreatedAt)
 }
 
 // SetRCLinkWatermark advances the subscriptions delta cursor.
@@ -52,16 +46,26 @@ func (s *Store) SetRCLinkWatermark(ctx context.Context, userID string, wm time.T
 	return err
 }
 
-// DeleteRCLink is unlink: the PAT ciphertext is destroyed; mirrored rooms stay.
+// DeleteRCLink is unlink: the PAT ciphertext is destroyed and the user's
+// mirrored rooms are archived (hidden from every list; history stays so a
+// re-link brings the same rooms back).
 func (s *Store) DeleteRCLink(ctx context.Context, userID string) error {
-	_, err := s.Q.Exec(ctx, `DELETE FROM rocket_chat_links WHERE user_id = $1`, userID)
-	return err
+	return s.WithTx(ctx, func(tx *Store) error {
+		if _, err := tx.Q.Exec(ctx, `DELETE FROM rocket_chat_links WHERE user_id = $1`, userID); err != nil {
+			return err
+		}
+		_, err := tx.Q.Exec(ctx, `
+			UPDATE rooms SET archived_at = now(), updated_at = now()
+			WHERE created_by = $1 AND source = $2 AND archived_at IS NULL`, userID, SrcRocketChat)
+		return err
+	})
 }
 
 // linkSel is the full SELECT for a rocket_chat_links row under `alias`.
 func linkSel(alias string) string {
-	return `SELECT ` + alias + `.user_id, ` + alias + `.rc_user_id, ` + alias + `.rc_username, ` +
-		alias + `.pat_enc, ` + alias + `.watermark, ` + alias + `.created_at FROM rocket_chat_links ` + alias
+	return `SELECT ` + alias + `.user_id, ` + alias + `.base_url, ` + alias + `.rc_user_id, ` +
+		alias + `.rc_username, ` + alias + `.pat_enc, ` + alias + `.watermark, ` + alias + `.created_at
+		FROM rocket_chat_links ` + alias
 }
 
 // RCLinkByUser returns the active link; ErrNotFound when none.
@@ -94,22 +98,16 @@ func (s *Store) ActiveRCLinks(ctx context.Context) ([]RCLink, error) {
 
 func scanLink(row pgx.Row) (RCLink, error) {
 	var l RCLink
-	err := row.Scan(&l.UserID, &l.RCUserID, &l.RCUsername, &l.PatEnc, &l.Watermark, &l.CreatedAt)
+	err := row.Scan(&l.UserID, &l.BaseURL, &l.RCUserID, &l.RCUsername, &l.PatEnc, &l.Watermark, &l.CreatedAt)
 	return l, err
 }
 
-// RCRoomByRID returns the locally mirrored room for a Rocket.Chat room id.
-func (s *Store) RCRoomByRID(ctx context.Context, rid string) (RoomRow, error) {
-	return scanRoom(s.Q.QueryRow(ctx,
-		`SELECT `+roomCols+` FROM rooms r WHERE r.source_rid = $1 AND r.source = $2`, rid, SrcRocketChat))
-}
-
-// UpsertRCRoom ensures the mirrored room exists; inserted reports whether this
-// call created it (triggering backfill). Room ids are deterministic from the
-// RC rid (migrate.NSRoom), so an id conflict covers both "already bridged"
-// and "already imported by rcmigrate" — the latter picks up its source marker
-// here, which is what makes linking an imported workspace free. A previously
-// archived local room comes back as RC still advertises it.
+// UpsertRCRoom ensures the owner's mirrored room exists; inserted reports
+// whether this call created it (triggering backfill). Ids are per link owner
+// (see rcbridge.rcID), so no other user's rows can conflict. An archived room
+// (unlinked earlier) comes back as the workspace still advertises it. The
+// stored history watermark is read back so delta pulls start where the last
+// one ended.
 func (s *Store) UpsertRCRoom(ctx context.Context, r *RoomRow, createdAt time.Time) (bool, error) {
 	var inserted bool
 	err := s.WithTx(ctx, func(tx *Store) error {
@@ -117,10 +115,10 @@ func (s *Store) UpsertRCRoom(ctx context.Context, r *RoomRow, createdAt time.Tim
 			INSERT INTO rooms (id, type, name, description, source, source_rid, created_by, created_at)
 			VALUES ($1, $2, $3, '', $4, $5, $6, $7)
 			ON CONFLICT (id) DO UPDATE SET
-				type = $2, name = $3, source = $4, source_rid = $5, archived_at = NULL, updated_at = now()
-			RETURNING (xmax = 0) AS inserted, created_at, updated_at`,
+				type = $2, name = $3, archived_at = NULL, updated_at = now()
+			RETURNING (xmax = 0) AS inserted, created_at, updated_at, source_synced_at`,
 			r.ID, r.Type, r.Name, r.Source, r.SourceRID, r.CreatedBy, createdAt,
-		).Scan(&inserted, &r.CreatedAt, &r.UpdatedAt)
+		).Scan(&inserted, &r.CreatedAt, &r.UpdatedAt, &r.SourceSyncedAt)
 	})
 	return inserted, err
 }
@@ -131,12 +129,12 @@ func (s *Store) AddRCRoomMember(ctx context.Context, roomID, userID string) erro
 	return s.AddMember(ctx, roomID, userID, "member")
 }
 
-// ArchiveRCRoom tombstones locally when the RC subscription disappears
-// (removed from the RC room, or the room was deleted there).
-func (s *Store) ArchiveRCRoom(ctx context.Context, rid string) error {
+// ArchiveRCRoom hides one mirrored room when its subscription disappears
+// remotely (removed from the room, or the room was deleted there).
+func (s *Store) ArchiveRCRoom(ctx context.Context, roomID string) error {
 	_, err := s.Q.Exec(ctx, `
 		UPDATE rooms SET archived_at = now(), updated_at = now()
-		WHERE source_rid = $1 AND source = $2 AND archived_at IS NULL`, rid, SrcRocketChat)
+		WHERE id = $1 AND source = $2 AND archived_at IS NULL`, roomID, SrcRocketChat)
 	return err
 }
 
@@ -146,34 +144,30 @@ func (s *Store) SetRoomSourceSynced(ctx context.Context, roomID string, synced t
 	return err
 }
 
-// UpsertStubUser ensures an RC author has a local, non-login shadow account
-// (same pattern as webhook bots: "!" is not a verifiable hash). RC usernames
-// can collide with local ones (different server); retry with an -rc suffix.
-// An rcMigrate-imported real user (same nsUser id, real hash) satisfies the
-// lookup and is used as-is — the two paths share one identity.
-func (s *Store) UpsertStubUser(ctx context.Context, userID, username string) (string, error) {
-	if existing, err := s.UserByID(ctx, userID); err == nil {
-		return existing.Username, nil // already present: stub or imported real account
+// UpsertStubUser ensures a remote author has a local, non-login shadow
+// account owned by one link (the id derives from the link owner, so no stub is
+// shared between users). Shadow accounts look like webhook bots
+// (password_hash '!', never verifiable) and SearchUsers hides them. A remote
+// name that collides with a local username gets an id-derived suffix.
+func (s *Store) UpsertStubUser(ctx context.Context, userID, username string) error {
+	if _, err := s.UserByID(ctx, userID); err == nil {
+		return nil
 	}
-	for attempt := 0; attempt < 3; attempt++ {
-		candidate := username
-		if attempt > 0 {
-			candidate = username + strings.Repeat("-rc", attempt)
-		}
+	for _, candidate := range []string{username, username + "-" + userID[:8]} {
 		_, err := s.Q.Exec(ctx, `
 			INSERT INTO users (id, username, display_name, password_hash, role, enabled, preferences)
-			VALUES ($1, $2, $2, '!', 'user', true, '{}'::jsonb)`,
-			userID, candidate)
+			VALUES ($1, $2, $3, '!', 'user', true, '{}'::jsonb)`,
+			userID, candidate, username)
 		if err == nil {
-			return candidate, nil
+			return nil
 		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "username") {
-			continue // local account owns this name: suffix and retry
+			continue
 		}
-		return "", err
+		return err
 	}
-	return "", errors.New("stub username: no free -rc suffix")
+	return errors.New("stub username collision")
 }
 
 // InsertRCMessage stores one mirrored message idempotently; inserted is true

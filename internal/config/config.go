@@ -69,14 +69,17 @@ type Config struct {
 	TurnstileSecret   string
 	TurnstileHostname string // optional: pin widget hostname
 
-	// Rocket.Chat live bridge (docs/ROCKETCHAT-INTEGRATION.md). BaseURL is
-	// the workspace origin (admin-configured, like S3_ENDPOINT — not user
-	// input, so no per-request SSRF guard). Empty disables the feature.
-	// RCPatKey encrypts stored Personal Access Tokens at rest (AES-GCM).
-	// RCLinkSync is the per-link poll cadence for the bridge goroutine.
-	RCBaseURL  string
-	RCPatKey   string
-	RCLinkSync time.Duration
+	// Rocket.Chat live bridge (docs/ROCKETCHAT-INTEGRATION.md, ADR-024). The
+	// workspace URL is per user (chosen when linking); RCBaseURL is only an
+	// optional default offered when a link request omits it. RCPatKey enables
+	// the feature and encrypts stored Personal Access Tokens (AES-GCM).
+	// RCAllowHosts exempts self-hosted workspace hosts from the private-address
+	// rejection that guards every user-supplied URL. RCLinkSync is the poll
+	// cadence.
+	RCBaseURL    string
+	RCPatKey     string
+	RCAllowHosts []string
+	RCLinkSync   time.Duration
 }
 
 func Load() (*Config, error) {
@@ -112,6 +115,7 @@ func Load() (*Config, error) {
 	} else if dur > 0 {
 		c.RCLinkSync = dur
 	}
+	c.RCAllowHosts = splitList("RC_ALLOW_HOSTS")
 	if c.RCBaseURL != "" {
 		u, perr := url.Parse(c.RCBaseURL)
 		if perr != nil || (u.Scheme != "https" && u.Scheme != "http") {
