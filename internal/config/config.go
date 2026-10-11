@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -67,6 +68,15 @@ type Config struct {
 	// Cloudflare Turnstile on password login. Empty secret = disabled.
 	TurnstileSecret   string
 	TurnstileHostname string // optional: pin widget hostname
+
+	// Rocket.Chat live bridge (docs/ROCKETCHAT-INTEGRATION.md). BaseURL is
+	// the workspace origin (admin-configured, like S3_ENDPOINT — not user
+	// input, so no per-request SSRF guard). Empty disables the feature.
+	// RCPatKey encrypts stored Personal Access Tokens at rest (AES-GCM).
+	// RCLinkSync is the per-link poll cadence for the bridge goroutine.
+	RCBaseURL  string
+	RCPatKey   string
+	RCLinkSync time.Duration
 }
 
 func Load() (*Config, error) {
@@ -83,6 +93,7 @@ func Load() (*Config, error) {
 		RateLimitRPM:    60,
 		VAPIDSubscriber: "https://chatserver.invalid",
 		NtfyQueryFlag:   "up",
+		RCLinkSync:      30 * time.Second,
 	}
 	var err error
 	c.DatabaseURL, err = required("DATABASE_URL")
@@ -94,6 +105,23 @@ func Load() (*Config, error) {
 	str(&c.BaseOrigin, "ORIGIN")
 	str(&c.TurnstileSecret, "TURNSTILE_SECRET")
 	str(&c.TurnstileHostname, "TURNSTILE_HOSTNAME")
+	str(&c.RCBaseURL, "RC_BASE_URL")
+	str(&c.RCPatKey, "RC_PAT_KEY")
+	if dur, derr := durVar("RC_SYNC_INTERVAL"); derr != nil {
+		return nil, derr
+	} else if dur > 0 {
+		c.RCLinkSync = dur
+	}
+	if c.RCBaseURL != "" {
+		u, perr := url.Parse(c.RCBaseURL)
+		if perr != nil || (u.Scheme != "https" && u.Scheme != "http") {
+			return nil, fmt.Errorf("RC_BASE_URL must be an http(s) workspace origin")
+		}
+		c.RCBaseURL = strings.TrimRight(c.RCBaseURL, "/")
+		if c.RCPatKey == "" {
+			return nil, errors.New("RC_PAT_KEY is required when RC_BASE_URL is set (encrypts stored Personal Access Tokens)")
+		}
+	}
 	// typed helpers fail fast: a typo'd env var must not silently fall back
 	if err = boolVar(&c.CookieSecure, "COOKIE_SECURE", true); err != nil {
 		return nil, err

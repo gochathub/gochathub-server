@@ -147,6 +147,12 @@ func (a *API) routes() {
 	mux.Handle("DELETE /api/v1/devices/{deviceId}", a.chain(true, http.HandlerFunc(a.handleDeleteDevice)))
 	mux.Handle("GET /api/v1/push/vapid", a.chain(true, http.HandlerFunc(a.handleVapidKey)))
 
+	// cross-server integrations (docs/ROCKETCHAT-INTEGRATION.md); 404 from
+	// the handlers when the feature is disabled
+	mux.Handle("POST /api/v1/integrations/rocket-chat/link", a.chain(true, http.HandlerFunc(a.handleRCLink)))
+	mux.Handle("GET /api/v1/integrations/rocket-chat/link", a.chain(true, http.HandlerFunc(a.handleRCLinkStatus)))
+	mux.Handle("DELETE /api/v1/integrations/rocket-chat/link", a.chain(true, http.HandlerFunc(a.handleRCLinkDelete)))
+
 	// websocket
 	mux.Handle("GET /api/v1/ws", a.chain(true, http.HandlerFunc(a.handleWS)))
 

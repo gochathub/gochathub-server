@@ -134,6 +134,7 @@ Full design, payload fields, and limits: [`docs/WEBHOOKS.md`](docs/WEBHOOKS.md) 
 | `VAPID_SUBSCRIBER` | `https://chatserver.invalid` | VAPID `sub` claim |
 | `PUSH_NTFY_QUERY` | `up` | Appends `?up=1` to push sends (ntfy UnifiedPush flag) |
 | `PUSH_ALLOW_HOSTS` | (empty) | Comma list of push hosts exempt from SSRF rejection (self-hosted ntfy) |
+| `RC_BASE_URL` / `RC_PAT_KEY` / `RC_SYNC_INTERVAL` | (empty) / (empty) / `30s` | Rocket.Chat live bridge (docs/ROCKETCHAT-INTEGRATION.md, ADR-023): workspace origin + key that encrypts stored Personal Access Tokens + per-link poll cadence. Unset `RC_BASE_URL` = feature off; `RC_PAT_KEY` required when it is set |
 | `MIGRATIONS_ON_SERVE` | unset | Opt in to applying migrations on serve |
 
 ## Clients

@@ -156,6 +156,7 @@ func (rs *RoomService) toModel(ctx context.Context, r store.RoomRow, role string
 		UpdatedAt:       r.UpdatedAt,
 		MyRole:          role,
 		UnreadCount:     unread,
+		Source:          r.Source,
 	}
 	return m
 }

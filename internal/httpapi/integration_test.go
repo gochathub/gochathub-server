@@ -89,7 +89,7 @@ func newServer(t *testing.T, u string, uploads service.Storage) (*httptest.Serve
 		return slog.New(slog.NewTextHandler(testLogSink(), &slog.HandlerOptions{Level: lvl}))
 	}()
 	st := store.New(pool)
-	svc, hub, err := app.Assemble(st, cfg, log)
+	svc, hub, _, err := app.Assemble(st, cfg, log)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}

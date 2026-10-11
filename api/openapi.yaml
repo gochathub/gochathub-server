@@ -21,6 +21,7 @@ tags:
   - name: attachments
   - name: devices
   - name: webhooks
+  - name: integrations
   - name: health
 
 paths:
@@ -1086,6 +1087,67 @@ paths:
                   public_key:
                     type: string
 
+  /integrations/rocket-chat/link:
+    post:
+      tags: [integrations]
+      security: [{ bearerAuth: [] }]
+      operationId: linkRocketChat
+      description: |
+        Link the caller's Rocket.Chat account (docs/ROCKETCHAT-INTEGRATION.md).
+        Requires a Personal Access Token created in the RC workspace
+        (permission create-personal-access-tokens; bypassTwoFactor if 2FA).
+        Credentials are validated against the workspace before the link row is
+        stored; the PAT is stored encrypted and never returned. First sync of
+        the account's DMs/private groups starts in the background.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkRocketChatRequest"
+      responses:
+        "200":
+          description: Linked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RocketChatLink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      tags: [integrations]
+      security: [{ bearerAuth: [] }]
+      operationId: getRocketChatLink
+      responses:
+        "200":
+          description: Link state (linked=false when none)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RocketChatLink"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [integrations]
+      security: [{ bearerAuth: [] }]
+      operationId: unlinkRocketChat
+      description: |
+        Unlink: the stored PAT is destroyed. Rooms already mirrored remain as
+        frozen local history and stop syncing.
+      responses:
+        "204":
+          description: Unlinked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /ws:
     get:
       tags: [health]
@@ -1246,6 +1308,30 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    LinkRocketChatRequest:
+      type: object
+      required: [rc_user_id, token]
+      properties:
+        rc_user_id:
+          type: string
+          description: |
+            The RC account's userId (preferred; shown when creating the PAT) or
+            its username.
+        token:
+          type: string
+          description: Personal Access Token created in the RC workspace.
+    RocketChatLink:
+      type: object
+      required: [linked]
+      properties:
+        linked:
+          type: boolean
+        rc_user_id:
+          type: string
+          description: The resolved RC userId; set when linked.
+        rc_username:
+          type: string
+          description: The resolved RC username; set when linked.
     InboundEmail:
       type: object
       description: Postmark inbound JSON subset (Cloudflare Email Worker posts the same shape).
@@ -1653,6 +1739,14 @@ components:
         unread_count:
           type: integer
           description: Unread (un-read receipts) for the caller; present on room lists.
+        source:
+          type: string
+          description: >
+            Cross-server origin; present ("rocket_chat") only on rooms mirrored
+            from a live Rocket.Chat workspace (docs/ROCKETCHAT-INTEGRATION.md).
+            Absent or "" for native rooms. Messages/posting behave normally;
+            edits, deletes, reactions and attachments across the bridge are
+            out of scope.
 
     CreateRoomRequest:
       type: object

@@ -57,6 +57,17 @@ func (ms *MessageService) Create(ctx context.Context, p Principal, roomID string
 			return model.Message{}, bad("reply target not in this room")
 		}
 	}
+	if room.Source != "" {
+		// bridged room (docs/ROCKETCHAT-INTEGRATION.md): route to the remote
+		// server instead of local persistence
+		if len(in.AttachmentIDs) > 0 {
+			return model.Message{}, bad("attachments are not supported in cross-server rooms")
+		}
+		if ms.App.RC == nil {
+			return model.Message{}, bad("cross-server integration is not enabled")
+		}
+		return ms.App.RC.Send(ctx, p, roomID, in)
+	}
 	if len(in.AttachmentIDs) > 10 {
 		return model.Message{}, bad("at most 10 attachments per message")
 	}
@@ -234,6 +245,12 @@ func (ms *MessageService) hydrateAll(ctx context.Context, rows []store.MessageRo
 // hydrate assembles the model.Message: author, receipts (caller's, gated),
 // attachments URLs, reactions, mentions. Single-row paths (create/get);
 // List uses hydrateAll.
+// Hydrate renders one row for a caller; exported for the cross-server bridge
+// (internal/rcbridge reuses the exact presentation path native sends use).
+func (ms *MessageService) Hydrate(ctx context.Context, row store.MessageRow, callerID string) (model.Message, error) {
+	return ms.hydrate(ctx, row, callerID)
+}
+
 func (ms *MessageService) hydrate(ctx context.Context, row store.MessageRow, callerID string) (model.Message, error) {
 	author, err := ms.App.Store.UserByID(ctx, row.AuthorID)
 	if err != nil {

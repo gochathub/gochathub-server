@@ -12,19 +12,21 @@ import (
 
 	"github.com/gochathub/gochathub-server/internal/config"
 	"github.com/gochathub/gochathub-server/internal/push"
+	"github.com/gochathub/gochathub-server/internal/rcbridge"
 	"github.com/gochathub/gochathub-server/internal/service"
 	"github.com/gochathub/gochathub-server/internal/storage"
 	"github.com/gochathub/gochathub-server/internal/store"
 	"github.com/gochathub/gochathub-server/internal/ws"
 )
 
-// Assemble builds the app graph. Returns the service app and its hub.
-func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.App, *ws.Hub, error) {
+// Assemble builds the app graph. Returns the service app, its hub, and the
+// cross-server bridge (nil when RC integration is disabled).
+func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.App, *ws.Hub, *rcbridge.Bridge, error) {
 	ctx := context.Background()
 
 	stor, err := storageFor(ctx, cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	sender := &push.Sender{
@@ -36,7 +38,7 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 		NtfyQueryFlag: cfg.NtfyQueryFlag,
 	}
 	if _, err := sender.EnsureVAPID(ctx, cfg.VAPIDPrivateKey, cfg.VAPIDPublicKey); err != nil {
-		return nil, nil, fmt.Errorf("vapid: %w", err)
+		return nil, nil, nil, fmt.Errorf("vapid: %w", err)
 	}
 
 	svc := &service.App{
@@ -48,6 +50,11 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 		Sender:         sender,
 	}
 	WireServices(svc, log, cfg.SessionTTL)
+	bridge, err := rcbridge.New(svc, cfg, log)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	svc.RC = bridge
 	if cfg.TurnstileSecret != "" {
 		svc.Auth.VerifyCaptcha = (&service.Turnstile{Secret: cfg.TurnstileSecret, Hostname: cfg.TurnstileHostname}).Verify
 	}
@@ -56,7 +63,7 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 	hub.App = svc
 	svc.Notify = hub
 	sender.ActiveIn = hub.SubscribedToRoom
-	return svc, hub, nil
+	return svc, hub, bridge, nil
 }
 
 // WireServices attaches the shared service graph. Both the server and the

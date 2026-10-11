@@ -39,9 +39,12 @@ func serveCmd() *cobra.Command {
 					return err
 				}
 			}
-			svc, hub, err := app.Assemble(b.q, b.cfg, b.log)
+			svc, hub, bridge, err := app.Assemble(b.q, b.cfg, b.log)
 			if err != nil {
 				return err
+			}
+			if bridge != nil {
+				go bridge.Run(ctx)
 			}
 			api := httpapi.New(svc, hub, b.log, b.cfg)
 			srv := &http.Server{
@@ -68,7 +71,7 @@ func serveCmd() *cobra.Command {
 // assembleFor builds the service graph for CLI commands (same layer as HTTP).
 // Push/storage failures degrade: CLI ops work without external infra.
 func assembleFor(b *boot) (*service.App, error) {
-	svc, _, err := app.Assemble(b.q, b.cfg, b.log)
+	svc, _, _, err := app.Assemble(b.q, b.cfg, b.log)
 	if err != nil {
 		b.log.Warn("partial assembly; continuing without push/storage", "err", err)
 		return minimalApp(b), nil

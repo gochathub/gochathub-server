@@ -22,15 +22,22 @@ type RoomRow struct {
 	// Archived is the caller's member-level conversation archive flag; only
 	// room queries that join room_members carry it.
 	Archived bool
+	// Cross-server marker (docs/ROCKETCHAT-INTEGRATION.md). Empty for native
+	// rooms; SourceRID is the remote room id.
+	Source         string
+	SourceRID      string
+	SourceSyncedAt *time.Time // last successful history pull (or backfill)
 }
 
 const roomCols = `r.id, r.type::text, r.name, r.description, r.avatar_attachment_id::text,
-	r.created_by, r.pinned_message_id::text, r.archived_at, r.created_at, r.updated_at`
+	r.created_by, r.pinned_message_id::text, r.archived_at, r.created_at, r.updated_at,
+	r.source, r.source_rid, r.source_synced_at`
 
 func scanRoom(row pgx.Row) (RoomRow, error) {
 	var r RoomRow
 	err := row.Scan(&r.ID, &r.Type, &r.Name, &r.Description, &r.AvatarAttachmentID,
-		&r.CreatedBy, &r.PinnedMessageID, &r.ArchivedAt, &r.CreatedAt, &r.UpdatedAt)
+		&r.CreatedBy, &r.PinnedMessageID, &r.ArchivedAt, &r.CreatedAt, &r.UpdatedAt,
+		&r.Source, &r.SourceRID, &r.SourceSyncedAt)
 	return r, err
 }
 
@@ -91,12 +98,14 @@ func (s *Store) RoomForUser(ctx context.Context, roomID, userID string) (RoomRow
 	var role string
 	const q = `SELECT r.id, r.type::text, r.name, r.description, r.avatar_attachment_id::text,
 		r.created_by, r.pinned_message_id::text, r.archived_at, r.created_at, r.updated_at,
+		r.source, r.source_rid, r.source_synced_at,
 		m.role::text, m.archived
 		FROM rooms r JOIN room_members m ON m.room_id = r.id AND m.user_id = $2
 		WHERE r.id = $1`
 	err := s.Q.QueryRow(ctx, q, roomID, userID).Scan(
 		&r.ID, &r.Type, &r.Name, &r.Description, &r.AvatarAttachmentID,
-		&r.CreatedBy, &r.PinnedMessageID, &r.ArchivedAt, &r.CreatedAt, &r.UpdatedAt, &role, &r.Archived)
+		&r.CreatedBy, &r.PinnedMessageID, &r.ArchivedAt, &r.CreatedAt, &r.UpdatedAt,
+		&r.Source, &r.SourceRID, &r.SourceSyncedAt, &role, &r.Archived)
 	return r, role, err
 }
 
@@ -115,6 +124,7 @@ func (s *Store) ListRoomsForUser(ctx context.Context, userID string) ([]RoomSumm
 	rows, err := s.Q.Query(ctx, `
 		SELECT r.id, r.type::text, r.name, r.description, r.avatar_attachment_id::text,
 			r.created_by, r.pinned_message_id::text, r.archived_at, r.created_at, r.updated_at,
+			r.source, r.source_rid, r.source_synced_at,
 			m.role::text, m.archived,
 			COALESCE(rc.unread, 0),
 			m.last_read_message_id::text,
@@ -142,6 +152,7 @@ func (s *Store) ListRoomsForUser(ctx context.Context, userID string) ([]RoomSumm
 		var rr RoomSummaryRow
 		if err := rows.Scan(&rr.ID, &rr.Type, &rr.Name, &rr.Description, &rr.AvatarAttachmentID,
 			&rr.CreatedBy, &rr.PinnedMessageID, &rr.ArchivedAt, &rr.CreatedAt, &rr.UpdatedAt,
+			&rr.Source, &rr.SourceRID, &rr.SourceSyncedAt,
 			&rr.MyRole, &rr.Archived, &rr.UnreadCount, &rr.LastReadID, &rr.MemberCount); err != nil {
 			return nil, err
 		}

@@ -155,3 +155,16 @@ Email attachments arrive as base64 inside the JSON body and are stored through t
 - Limits: 10 attachments per message (existing), `MAX_UPLOAD_BYTES` per file, `WEBHOOK_MAX_BODY_BYTES` per request, 2 concurrent ingests. Base64 JSON is held in memory about three times during decode; streaming decode is the upgrade path.
 - Rejected alternatives: dropping attachments (user chose full fidelity) and a second bypass storage path (duplicates the validation).
 - Message text is rendered inside a code fence with inline-code headers because `markdown.Validate` rejects raw HTML-like text (`<a@b.c>`) that every email contains.
+
+## ADR-023: Rocket.Chat live bridge — per-user PAT delegation, mirror rooms, polling
+
+`internal/rcbridge` continuously mirrors a running Rocket.Chat workspace into local rooms (docs/ROCKETCHAT-INTEGRATION.md was the requirements pass; research + open questions there). Choices:
+
+- **Delegation, not bots**: each user pastes their own RC Personal Access Token (`users.generatePersonalAccessToken`, permission `create-personal-access-tokens`) + RC userId via `POST /api/v1/integrations/rocket-chat/link`. The PAT authenticates both REST and any future realtime socket (`login {resume: <PAT>}`); no RC-side admin, bot account, or federation. Federated routes (native Matrix federation = v7.11 Premium) were rejected as server-to-server scope beyond the goal.
+- **Model A mirror** over fetch-through proxying: bridged rooms are real local rooms (`rooms.source = 'rocket_chat'`, `source_rid`, `source_synced_at` per-room watermark in 005). WS delivery, push, receipts, search, pagination need no special-casing; only posting routes remotely (`MessageService.Create` delegates to `App.RC.Send`).
+- **Shared id space**: room/message/author uuidv5 ids come from the same namespaces as ADR-019 (`internal/rcids`), so linking a previously `rcmigrate`-imported workspace reopens identical rooms and `ON CONFLICT (id)` dedupes — no cutover migration.
+- **RC identities**: remote authors become non-login stub users (`password_hash = '!'`, like webhook bots) unless the same `nsUser` id exists as an imported real user. The link owner's own RC account maps to their real local user. RC usernames colliding with local accounts get `-rc` suffixes.
+- **Transport**: REST deltas only in v1 — `subscriptions.get?updatedSince` per link (watermark = max `_updatedAt` seen), `dm.history`/`groups.history` per dirty room, 100-message backfill on first sight, one 30 s poll goroutine for all links (sequential; shared rate-limit budget makes fan-out counterproductive). Endpoint-name renames (`im.*`→`dm.*`) handled by try-and-remember fallbacks. RC websocket streams are the known upgrade when push latency matters.
+- **Send-through**: `chat.postMessage` with the user's PAT; local row is the RC echo's deterministic id, so the sync race with the echo dedupes by construction. Thread replies (`tmid`), edits/deletes back, reactions, attachments, `t=c` channels: out of scope v1, fail closed on the local side.
+- **Unlink** destroys the stored PAT (AES-256-GCM, key from `RC_PAT_KEY`, required whenever `RC_BASE_URL` is set); mirrored rooms remain as frozen local history.
+- **Read state stays one-way**: reading on RC does not propagate; receipts are local-only. Limits mirror webhook conventions (never log the PAT, never echo it).

@@ -342,7 +342,7 @@ func TestLoginRehashesBcrypt(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	svc, _, err := app.Assemble(st, &config.Config{SessionTTL: time.Hour, RateLimitRPM: 10_000}, log)
+	svc, _, _, err := app.Assemble(st, &config.Config{SessionTTL: time.Hour, RateLimitRPM: 10_000}, log)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}

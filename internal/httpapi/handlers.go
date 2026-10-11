@@ -889,3 +889,51 @@ func (a *API) handleWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "ws_error", "websocket error")
 	}
 }
+
+// --- rocket.chat bridge (docs/ROCKETCHAT-INTEGRATION.md) ---
+
+func (a *API) handleRCLink(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	if a.svc.RC == nil {
+		writeError(w, 404, "not_found", "integration disabled")
+		return
+	}
+	var in service.LinkRequest
+	if err := decodeJSON(r, &in); err != nil || in.RCUserID == "" || in.Token == "" {
+		writeError(w, 400, "validation", "rc_user_id and token required")
+		return
+	}
+	st, err := a.svc.RC.Link(r.Context(), p, in)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, st)
+}
+
+func (a *API) handleRCLinkStatus(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	if a.svc.RC == nil {
+		writeError(w, 404, "not_found", "integration disabled")
+		return
+	}
+	st, err := a.svc.RC.Status(r.Context(), p)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, st)
+}
+
+func (a *API) handleRCLinkDelete(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	if a.svc.RC == nil {
+		writeError(w, 404, "not_found", "integration disabled")
+		return
+	}
+	if err := a.svc.RC.Unlink(r.Context(), p); err != nil {
+		a.mapError(w, err)
+		return
+	}
+	w.WriteHeader(204)
+}

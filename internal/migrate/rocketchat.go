@@ -21,6 +21,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"github.com/gochathub/gochathub-server/internal/pwd"
+	"github.com/gochathub/gochathub-server/internal/rcids"
 	"github.com/gochathub/gochathub-server/internal/storage"
 	"github.com/gochathub/gochathub-server/internal/store"
 )
@@ -28,9 +29,9 @@ import (
 // Deterministic UUIDv5 namespaces: the same source id maps to the same target
 // id on every run — this is what makes the delta (repeatable cutover) work.
 var (
-	nsUser = uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://gochathub.app/migrate/rc/user"))
-	nsRoom = uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://gochathub.app/migrate/rc/room"))
-	nsMsg  = uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://gochathub.app/migrate/rc/msg"))
+	nsUser = uuid.NewSHA1(uuid.NameSpaceURL, []byte(rcids.NSUser))
+	nsRoom = uuid.NewSHA1(uuid.NameSpaceURL, []byte(rcids.NSRoom))
+	nsMsg  = uuid.NewSHA1(uuid.NameSpaceURL, []byte(rcids.NSMsg))
 	nsAtt  = uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://gochathub.app/migrate/rc/att"))
 	nsRev  = uuid.NewSHA1(uuid.NameSpaceURL, []byte("https://gochathub.app/migrate/rc/rev"))
 )

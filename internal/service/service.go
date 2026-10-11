@@ -49,6 +49,7 @@ type App struct {
 
 	Sender      PushSender
 	Notify      Notifier
+	RC          RCBridge // cross-server bridge; nil when disabled
 	Users       UserService
 	Auth        *AuthService
 	Rooms       *RoomService

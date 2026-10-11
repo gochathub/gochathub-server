@@ -97,6 +97,14 @@ on-device Android distributor test, idempotency keys, rate-limit tests.
 - [x] Attachments stored as bot-owned uploads; failures noted in the body; dedupe by source MessageID; optional spam gate.
 - [ ] Self-service webhook management over REST, per-address routing, HTML→text, per-webhook rate limit (see WEBHOOKS.md "Deferred").
 
+## Rocket.Chat live bridge (docs/ROCKETCHAT-INTEGRATION.md, ADR-023)
+
+- [x] Per-user link with a delegated Personal Access Token (`POST/GET/DELETE /api/v1/integrations/rocket-chat/link`); PAT encrypted at rest (`RC_PAT_KEY`), never echoed.
+- [x] DM + private-group subscriptions mirrored into local rooms with the shared import id space (`internal/rcids`); rcmigrate continuity via `ON CONFLICT (id)`.
+- [x] Sync: `subscriptions.get?updatedSince` watermark + per-room history pulls; 30 s poll goroutine; endpoint rename fallbacks (`dm.*`/`im.*`).
+- [x] Send-through via `chat.postMessage`, echo dedupe; bridged fan-out reuses the native WS + push pipeline.
+- [ ] RC websocket streams for instant delivery; attachments across the bridge; reactions/edits back to RC; `t=c` channels; unread-state sync (see integration doc "Open questions"/"Out of scope").
+
 ## API
 
 - [x] OpenAPI contract synchronized with the implementation (`api/openapi.yaml`; enforced by `scripts/contract-check.py`, runs under `go test ./scripts/`).

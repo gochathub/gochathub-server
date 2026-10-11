@@ -73,6 +73,9 @@ type Room struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 	MyRole      string    `json:"my_role,omitempty"` // caller's member role
 	UnreadCount int64     `json:"unread_count,omitempty"`
+	// Source marks cross-server rooms from a live Rocket.Chat bridge
+	// (docs/ROCKETCHAT-INTEGRATION.md); omitted entirely for native rooms.
+	Source string `json:"source,omitempty"`
 }
 
 type InviteStatus string
