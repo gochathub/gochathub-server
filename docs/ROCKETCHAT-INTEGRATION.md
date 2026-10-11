@@ -238,7 +238,7 @@ Derived requirements (model-independent; refine after A/B is chosen):
 1. **Model A vs B** (mirror vs proxy): recommendation is A (§3) — confirm.
 2. **Backfill depth**: how much history is pulled when a linked room is
    first opened — last N messages, since-link-time only, or full history?
-3. **Public channels** (`t=c`): include in v1 or DMs+private groups only?
+3. **Public channels** (`t=c`): include in v1 or DMs+private groups only? *(Resolved: included as owner-only private rooms, ADR-028.)*
 4. **Live delivery**: REST delta polling only for v1 (recommended), or wire the
    RC websocket `stream-notify-user` in the same phase?
 5. **Link entry UX**: user pastes PAT + userId (self-service, needs RC admin

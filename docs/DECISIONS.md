@@ -167,7 +167,7 @@ Email attachments arrive as base64 inside the JSON body and are stored through t
 - **Shared id space**: room/message/author uuidv5 ids come from the same namespaces as ADR-019 (`internal/rcids`), so linking a previously `rcmigrate`-imported workspace reopens identical rooms and `ON CONFLICT (id)` dedupes — no cutover migration.
 - **RC identities**: remote authors become non-login stub users (`password_hash = '!'`, like webhook bots) unless the same `nsUser` id exists as an imported real user. The link owner's own RC account maps to their real local user. RC usernames colliding with local accounts get `-rc` suffixes.
 - **Transport**: REST deltas only in v1 — `subscriptions.get?updatedSince` per link (watermark = max `_updatedAt` seen), `dm.history`/`groups.history` per dirty room, 100-message backfill on first sight, one 30 s poll goroutine for all links (sequential; shared rate-limit budget makes fan-out counterproductive). Endpoint-name renames (`im.*`→`dm.*`) handled by try-and-remember fallbacks. RC websocket streams are the known upgrade when push latency matters.
-- **Send-through**: `chat.postMessage` with the user's PAT; local row is the RC echo's deterministic id, so the sync race with the echo dedupes by construction. Thread replies (`tmid`), edits/deletes back, reactions, attachments, `t=c` channels: out of scope v1, fail closed on the local side.
+- **Send-through**: `chat.postMessage` with the user's PAT; local row is the RC echo's deterministic id, so the sync race with the echo dedupes by construction. Thread replies (`tmid`), edits/deletes back, reactions, attachments, `t=c` channels: out of scope v1, fail closed on the local side. (Channels: now mirrored, see ADR-028.)
 - **Unlink** destroys the stored PAT (AES-256-GCM, key from `RC_PAT_KEY`, required whenever `RC_BASE_URL` is set); mirrored rooms remain as frozen local history.
 - **Read state stays one-way**: reading on RC does not propagate; receipts are local-only. Limits mirror webhook conventions (never log the PAT, never echo it).
 
@@ -217,3 +217,11 @@ Design in `docs/SIGNUP_INVITES_DESIGN.md`; requirements in `docs/SIGNUP_INVITES_
 - **No WS event**: a changed default applies on the user's next preferences load.
 - **Room-list extras** (`GET /rooms` only, for the classic sidebar): `last_message` (newest non-deleted, body cut to 200 chars), `first_unread_message_id` (oldest unread for the caller; places the "unread messages" divider) and `peer_online` (direct rooms; true only when the peer is connected **and** has `last_seen_visible` on, so hidden/offline/unknown look the same). Computed with LATERAL joins in `ListRoomsForUser`; no schema change. Live presence changes still arrive as `presence.changed`.
 - **Known gap**: the `presence.changed` broadcast does not check the peer's `last_seen_visible`; only the snapshot above does. Closing it needs the hub to know preferences.
+
+## ADR-028: Rocket.Chat bridge mirrors channels; first sync reads `update`
+
+Amends ADR-023 (channels out of scope) after production showed a linked account mirroring nothing.
+
+- **Bug**: the first sync (no `updatedSince`) read only the `subscriptions` key. Current Rocket.Chat servers answer `{update, remove, success}` with or without `updatedSince`, so the first sync saw zero rooms, never set the watermark, and repeated forever. `listSubs` now merges `subscriptions` (legacy) and `update`. The test fixture emits the real shape.
+- **Channels (`t=c`) are mirrored** as owner-only `private` local rooms, never `public`: a public local room would show up for other users, while the mirror is per owner (ADR-024). History comes from `channels.history`; direct rooms still use `dm.history` with the `im.history` fallback and private groups `groups.history`. `history` now takes the RC subscription type instead of the local room type, since `private` no longer identifies the endpoint.
+- **Unchanged**: livechat (`t=l`) is ignored; thread replies, edits/deletes back, reactions and attachments stay out of scope (ADR-023).
