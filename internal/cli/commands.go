@@ -120,7 +120,7 @@ func versionCmd() *cobra.Command {
 
 func userCmd() *cobra.Command {
 	c := &cobra.Command{Use: "user", Short: "Manage user accounts"}
-	c.AddCommand(userCreate(), userList(), userPasswd(), user2FAReset(), userEnable(), userDisable(), userDelete())
+	c.AddCommand(userCreate(), userList(), userPasswd(), user2FAReset(), userPasskeyList(), userPasskeyReset(), userEnable(), userDisable(), userDelete())
 	return c
 }
 
@@ -138,6 +138,54 @@ func user2FAReset() *cobra.Command {
 				return err
 			}
 			return app.Auth.ResetTOTP(cmd.Context(), args[0])
+		},
+	}
+}
+
+func userPasskeyList() *cobra.Command {
+	return &cobra.Command{
+		Use: "passkey-list <username>", Short: "List a user's passkeys", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			b, closeFn, err := bootstrap()
+			if err != nil {
+				return err
+			}
+			defer closeFn()
+			app, err := assembleFor(b)
+			if err != nil {
+				return err
+			}
+			vs, err := app.Auth.PasskeysForUsername(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			for _, v := range vs {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", v.ID, v.Name, v.CreatedAt.Format(time.RFC3339))
+			}
+			return nil
+		},
+	}
+}
+
+func userPasskeyReset() *cobra.Command {
+	return &cobra.Command{
+		Use: "passkey-reset <username>", Short: "Remove all of a user's passkeys (lost device; revokes sessions)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			b, closeFn, err := bootstrap()
+			if err != nil {
+				return err
+			}
+			defer closeFn()
+			app, err := assembleFor(b)
+			if err != nil {
+				return err
+			}
+			n, err := app.Auth.RemovePasskeys(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "removed %d passkey(s)\n", n)
+			return nil
 		},
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/gochathub/gochathub-server/internal/id"
 	"github.com/gochathub/gochathub-server/internal/pwd"
 	"github.com/gochathub/gochathub-server/internal/store"
@@ -19,6 +21,8 @@ type AuthService struct {
 	Now        func() time.Time // test clock for TOTP steps; nil = time.Now
 	// VerifyCaptcha gates password login (Turnstile); nil = no captcha.
 	VerifyCaptcha func(ctx context.Context, token string, ip *string) error
+	// WA is the WebAuthn relying party; nil = passkeys off (no ORIGIN).
+	WA *webauthn.WebAuthn
 }
 
 // Principal identifies an authenticated actor.

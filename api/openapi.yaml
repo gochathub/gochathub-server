@@ -116,6 +116,115 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /auth/passkey/login/begin:
+    post:
+      tags: [auth]
+      operationId: passkeyLoginBegin
+      description: >
+        Start a usernameless passkey login. `options` is the WebAuthn
+        `PublicKeyCredentialRequestOptionsJSON` (under `publicKey`); pass it
+        to `navigator.credentials.get`. The ceremony lives 5 minutes and is
+        single-use. `404 passkeys_disabled` when the server has no `ORIGIN`.
+      responses:
+        "200":
+          description: Ceremony
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasskeyCeremony"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /auth/passkey/login/finish:
+    post:
+      tags: [auth]
+      operationId: passkeyLoginFinish
+      description: >
+        Complete a passkey login with the `AuthenticationResponseJSON`. A
+        passkey is full MFA: no `two_factor_required` step. Every failure is a
+        plain `401 unauthorized`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasskeyLoginFinishRequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Too many attempts (`rate_limited`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/mobile/code:
+    post:
+      tags: [auth]
+      security: [{ bearerAuth: [] }]
+      operationId: createMobileCode
+      description: >
+        Browser-to-app handoff (Android Custom Tab). Mint a one-time code
+        (60 s) bound to the app's PKCE challenge, then deep-link it to the
+        app. Sessions only (403 for API tokens).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MobileCodeRequest"
+      responses:
+        "200":
+          description: Code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MobileCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /auth/mobile/token:
+    post:
+      tags: [auth]
+      operationId: exchangeMobileCode
+      description: >
+        Redeem a handoff code with its PKCE verifier for a normal personal API
+        token (named `mobile`). A code is single-use: a wrong verifier burns it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MobileTokenRequest"
+      responses:
+        "200":
+          description: Token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MobileToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          description: Too many attempts (`rate_limited`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /auth/logout:
     post:
       tags: [auth]
@@ -411,6 +520,132 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /users/me/passkeys/begin:
+    post:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: passkeyRegisterBegin
+      description: >
+        Start registering a passkey. Re-authenticates with the password, plus
+        a TOTP/backup `code` when two-factor is on (401 otherwise). Sessions
+        only (403 for API tokens and Rocket.Chat shadow accounts). `options`
+        is `PublicKeyCredentialCreationOptionsJSON` (under `publicKey`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasskeyRegisterBeginRequest"
+      responses:
+        "200":
+          description: Ceremony
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasskeyCeremony"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/me/passkeys/finish:
+    post:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: passkeyRegisterFinish
+      description: Complete registration with the `RegistrationResponseJSON`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasskeyRegisterFinishRequest"
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Passkey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/me/passkeys:
+    get:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: listPasskeys
+      description: The caller's passkeys (metadata only).
+      responses:
+        "200":
+          description: Passkeys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Passkey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users/me/passkeys/{passkeyId}:
+    parameters:
+      - in: path
+        name: passkeyId
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: renamePasskey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenamePasskeyRequest"
+      responses:
+        "200":
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Passkey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [users]
+      security: [{ bearerAuth: [] }]
+      operationId: deletePasskey
+      description: >
+        Delete a passkey. `409 conflict` when it is the last one of an account
+        without a usable password (would lock the user out).
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Last passkey of a passwordless account (`conflict`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /users/search:
     get:
@@ -1530,6 +1765,95 @@ components:
           format: date-time
           nullable: true
 
+    PasskeyCeremony:
+      type: object
+      required: [ceremony_id, options]
+      properties:
+        ceremony_id:
+          type: string
+          description: Opaque, single-use, 5 minutes. Echo it in the finish call.
+        options:
+          type: object
+          additionalProperties: true
+          description: >
+            WebAuthn JSON options ({"publicKey": ...}); feed
+            `PublicKeyCredential.parse*OptionsJSON`.
+    PasskeyLoginFinishRequest:
+      type: object
+      required: [ceremony_id, credential]
+      properties:
+        ceremony_id: { type: string }
+        credential:
+          type: object
+          additionalProperties: true
+          description: '`AuthenticationResponseJSON` (`credential.toJSON()`).'
+        token_request:
+          type: boolean
+          description: Same as on `LoginRequest` (ADR-015).
+    PasskeyRegisterBeginRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string }
+        code:
+          type: string
+          description: TOTP or backup code; required when two-factor is on.
+    PasskeyRegisterFinishRequest:
+      type: object
+      required: [ceremony_id, credential]
+      properties:
+        ceremony_id: { type: string }
+        name:
+          type: string
+          maxLength: 100
+          description: Label shown in the list; defaults to `passkey`.
+        credential:
+          type: object
+          additionalProperties: true
+          description: '`RegistrationResponseJSON` (`credential.toJSON()`).'
+    RenamePasskeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 100 }
+    Passkey:
+      type: object
+      required: [id, name, created_at, last_used_at, backup_eligible, transports]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        backup_eligible:
+          type: boolean
+          description: Synced passkey (true) vs device-bound key (false).
+        transports:
+          type: array
+          items: { type: string }
+    MobileCodeRequest:
+      type: object
+      required: [code_challenge]
+      properties:
+        code_challenge:
+          type: string
+          description: base64url (unpadded) SHA-256 of the app's `code_verifier`.
+    MobileCode:
+      type: object
+      required: [code, expires_in]
+      properties:
+        code: { type: string }
+        expires_in: { type: integer, description: Seconds. }
+    MobileTokenRequest:
+      type: object
+      required: [code, code_verifier]
+      properties:
+        code: { type: string }
+        code_verifier: { type: string }
+    MobileToken:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
     AuthResponse:
       description: >
         Login response. Browsers: cookie set, `token` omitted. Clients that

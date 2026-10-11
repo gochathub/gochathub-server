@@ -134,3 +134,4 @@ on-device Android distributor test, idempotency keys, rate-limit tests.
 - [x] CLI works without manually editing the database.
 - [x] No secrets committed (verify before each commit).
 - [x] Server can run as one Linux binary.
+- [x] Passkeys (WebAuthn) login + management + Android browser handoff, server side (ADR-025, `docs/PASSKEYS.md`); web UI and Android client pending.

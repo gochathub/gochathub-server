@@ -18,16 +18,17 @@ import (
 
 // API is the assembled HTTP transport.
 type API struct {
-	svc        *service.App
-	hub        *ws.Hub
-	log        *slog.Logger
-	cfg        *config.Config
-	mux        *http.ServeMux
-	rate       *limiter
-	loginRate  *limiter
-	trustProxy bool
-	cookieName string
-	hookSem    chan struct{} // bounds concurrent webhook ingests (large base64 bodies)
+	svc         *service.App
+	hub         *ws.Hub
+	log         *slog.Logger
+	cfg         *config.Config
+	mux         *http.ServeMux
+	rate        *limiter
+	loginRate   *limiter
+	passkeyRate *limiter // passkey finish + mobile token exchange
+	trustProxy  bool
+	cookieName  string
+	hookSem     chan struct{} // bounds concurrent webhook ingests (large base64 bodies)
 }
 
 // loginRPM: dedicated per-IP bucket for password attempts; the shared global
@@ -37,14 +38,15 @@ const loginRPM = 10
 // New builds routes + middleware chain.
 func New(svc *service.App, hub *ws.Hub, log *slog.Logger, cfg *config.Config) *API {
 	a := &API{
-		svc:        svc,
-		hub:        hub,
-		log:        log,
-		cfg:        cfg,
-		rate:       newLimiter(cfg.RateLimitRPM),
-		loginRate:  newLimiter(loginRPM),
-		trustProxy: cfg.TrustProxy,
-		cookieName: cookieName(cfg.CookieSecure),
+		svc:         svc,
+		hub:         hub,
+		log:         log,
+		cfg:         cfg,
+		rate:        newLimiter(cfg.RateLimitRPM),
+		loginRate:   newLimiter(loginRPM),
+		passkeyRate: newLimiter(loginRPM),
+		trustProxy:  cfg.TrustProxy,
+		cookieName:  cookieName(cfg.CookieSecure),
 		// ponytail: fixed 2 slots bound memory at ~2 bodies in flight; make
 		// it configurable if inbound volume ever needs more
 		hookSem: make(chan struct{}, 2),
@@ -87,6 +89,15 @@ func (a *API) routes() {
 	mux.Handle("POST /api/v1/users/me/2fa/enable", a.chain(true, http.HandlerFunc(a.handleTOTPEnable)))
 	mux.Handle("POST /api/v1/users/me/2fa/backup-codes", a.chain(true, http.HandlerFunc(a.handleTOTPBackupCodes)))
 	mux.Handle("DELETE /api/v1/users/me/2fa", a.chain(true, http.HandlerFunc(a.handleTOTPDisable)))
+	mux.Handle("POST /api/v1/auth/passkey/login/begin", a.chain(false, http.HandlerFunc(a.handlePasskeyLoginBegin)))
+	mux.Handle("POST /api/v1/auth/passkey/login/finish", a.chain(false, http.HandlerFunc(a.handlePasskeyLoginFinish)))
+	mux.Handle("POST /api/v1/auth/mobile/code", a.chain(true, http.HandlerFunc(a.handleMobileCode)))
+	mux.Handle("POST /api/v1/auth/mobile/token", a.chain(false, http.HandlerFunc(a.handleMobileToken)))
+	mux.Handle("POST /api/v1/users/me/passkeys/begin", a.chain(true, http.HandlerFunc(a.handlePasskeyRegisterBegin)))
+	mux.Handle("POST /api/v1/users/me/passkeys/finish", a.chain(true, http.HandlerFunc(a.handlePasskeyRegisterFinish)))
+	mux.Handle("GET /api/v1/users/me/passkeys", a.chain(true, http.HandlerFunc(a.handlePasskeyList)))
+	mux.Handle("PATCH /api/v1/users/me/passkeys/{passkeyId}", a.chain(true, http.HandlerFunc(a.handlePasskeyRename)))
+	mux.Handle("DELETE /api/v1/users/me/passkeys/{passkeyId}", a.chain(true, http.HandlerFunc(a.handlePasskeyDelete)))
 	mux.Handle("POST /api/v1/users/me/tokens", a.chain(true, http.HandlerFunc(a.handleMintToken)))
 	mux.Handle("GET /api/v1/users/me/tokens", a.chain(true, http.HandlerFunc(a.handleListTokens)))
 	mux.Handle("DELETE /api/v1/users/me/tokens/{tokenId}", a.chain(true, http.HandlerFunc(a.handleRevokeToken)))
@@ -280,6 +291,8 @@ func (a *API) mapError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, service.ErrPasskeysDisabled):
+		writeError(w, 404, "passkeys_disabled", "passkeys are not enabled")
 	case errors.Is(err, service.ErrUnauthorized):
 		writeError(w, 401, "unauthorized", "invalid credentials")
 	case errors.Is(err, service.ErrForbidden):

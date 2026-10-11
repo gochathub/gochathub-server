@@ -179,3 +179,17 @@ Amends ADR-023 after a review found server-wide state where the data belongs to 
 - **Import continuity dropped**: live ids no longer share the `rcmigrate` namespaces, so an imported workspace is not adopted by the bridge (it would also pin the id to a single owner). Revisit with an explicit adopt step if needed.
 - **Bugs fixed**: delta pulls re-fetched the full window (`source_synced_at` was never read back); DM history called `groups.history` (type compared as `"d"` against `"direct"`); `svc.RC` was a typed-nil interface when disabled.
 - **Not done (ponytail)**: delete-my-mirror, per-user sync interval / type filters, per-workspace workers, HKDF per-user token keys.
+
+
+## ADR-025: Passkeys (WebAuthn) as a passwordless login; Android via browser handoff
+
+Design in `docs/PASSKEYS.md`.
+
+- **Passwordless alternative, full MFA**: a discoverable passkey (resident key, user verification required) signs in alone and skips the TOTP challenge. Password (+TOTP) login is unchanged. Library: `go-webauthn/webauthn`; tests use `descope/virtualwebauthn`.
+- **RP from `ORIGIN`**: RP ID = origin host, one allowed origin. `ORIGIN` unset → feature off (`404 passkeys_disabled`). Changing the host invalidates every registered passkey.
+- **Storage**: `user_passkeys.credential` is the library's Credential as JSONB (sign count, flags, key stay library-owned); `credential_id` is lifted out for lookup. Ceremony state lives in `webauthn_ceremonies` (Postgres, single-use, 5 min), not process memory. User handle = the user's UUID bytes (no new `users` column).
+- **Registration needs re-auth**: password, plus TOTP/backup code when 2FA is on, passed inline (same shape as `DisableTOTP`) — no "recently verified" server state. Sessions only; shadow accounts refused; max 10 passkeys. A clone warning (sign-count regression) fails the login and is audited.
+- **Last-passkey guard**: deleting a user's last passkey is refused (409) when the account has no usable password. Dead code until passwordless accounts exist; kept on purpose.
+- **Android = browser handoff, not Credential Manager**: Credential Manager needs `/.well-known/assetlinks.json` per server domain and per signing key (F-Droid/Play/debug differ). Instead the app opens a Custom Tab on the web login; after any login the page mints a 60 s one-time code bound to the app's PKCE challenge (`/auth/mobile/code`) and deep-links it; the app redeems it (`/auth/mobile/token`) for a normal API token. An intercepted deep link yields a code that is useless without the verifier.
+- **Rate limits**: passkey `finish` and the code exchange share a dedicated per-IP bucket (`passkeyRate`, same ceiling as password login); `begin` only the global bucket.
+- **Not done (ponytail)**: attestation / FIDO MDS (attestation `none`), related-origins, passkey-only enforcement, step-up on delete/rename.
