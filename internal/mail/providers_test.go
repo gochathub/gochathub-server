@@ -55,7 +55,7 @@ func TestProviderRequests(t *testing.T) {
 			t.Fatalf("%+v", s)
 		}
 		var pm map[string]string
-		if err := json.Unmarshal([]byte(s.body), &pm); err != nil || pm["From"] != "Chat <c@x.test>" || pm["To"] != "to@x.test" || pm["TextBody"] == "" {
+		if err := json.Unmarshal([]byte(s.body), &pm); err != nil || pm["From"] != "Chat <c@x.test>" || pm["To"] != "to@x.test" || pm["TextBody"] == "" || pm["MessageStream"] != "" {
 			t.Fatalf("postmark body: %s", s.body)
 		}
 	})
@@ -139,5 +139,31 @@ func TestNewUnknownProvider(t *testing.T) {
 		if _, err := New(p, map[string]string{}); err != nil {
 			t.Fatalf("%s: %v", p, err)
 		}
+	}
+}
+
+func TestPostmarkMessageStream(t *testing.T) {
+	ctx := context.Background()
+	body := func(stream string) map[string]string {
+		srv, s := fake(t, 200, `{"ErrorCode":0}`)
+		if err := (&Postmark{Token: "t", From: "c@x.test", Stream: stream, BaseURL: srv.URL}).Send(ctx, msg); err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]string
+		if err := json.Unmarshal([]byte(s.body), &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if got := body("invites")["MessageStream"]; got != "invites" {
+		t.Fatalf("MessageStream = %q, want invites", got)
+	}
+	if _, ok := body("")["MessageStream"]; ok {
+		t.Fatal("blank stream must be omitted so Postmark uses its default")
+	}
+	// registry -> sender wiring
+	s, err := New("postmark", map[string]string{"server_token": "t", "from": "c@x.test", "message_stream": "invites"})
+	if err != nil || s.(*Postmark).Stream != "invites" {
+		t.Fatalf("New: %+v %v", s, err)
 	}
 }

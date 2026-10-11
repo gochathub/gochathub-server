@@ -55,7 +55,7 @@ func TestMailProviders(t *testing.T) {
 	if v["active"] != "" || v["encryption_available"] != false || len(v["providers"].([]any)) != 7 {
 		t.Fatalf("fresh view: %v", v)
 	}
-	pm := map[string]string{"server_token": "pm-secret-token", "from": "Chat <chat@example.test>"}
+	pm := map[string]string{"server_token": "pm-secret-token", "message_stream": "invites", "from": "Chat <chat@example.test>"}
 	admin.do("PUT", base+"/postmark", map[string]any{"values": pm}, 400) // no SECRETS_KEY
 
 	// wiring: key, allow-listed SMTP host, capturing transport
@@ -107,7 +107,7 @@ func TestMailProviders(t *testing.T) {
 		t.Fatalf("active: %v", v)
 	}
 	admin.do("POST", base+"/test", map[string]string{"to": "me@x.test"}, 204)
-	if len(via) != 1 || via[0].provider != "postmark" || via[0].values["server_token"] != "pm-secret-token" {
+	if len(via) != 1 || via[0].provider != "postmark" || via[0].values["server_token"] != "pm-secret-token" || via[0].values["message_stream"] != "invites" {
 		t.Fatalf("sender wiring: %+v", via)
 	}
 

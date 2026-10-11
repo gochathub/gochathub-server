@@ -30,7 +30,7 @@ func New(provider string, v map[string]string) (service.Mailer, error) {
 	case "smtp":
 		return &SMTP{Host: v["host"], Port: v["port"], User: v["user"], Pass: v["password"], From: v["from"], TLS: v["tls"]}, nil
 	case "postmark":
-		return &Postmark{Token: v["server_token"], From: v["from"]}, nil
+		return &Postmark{Token: v["server_token"], Stream: v["message_stream"], From: v["from"]}, nil
 	case "sendgrid":
 		return &SendGrid{Key: v["api_key"], From: v["from"]}, nil
 	case "resend":
@@ -99,13 +99,17 @@ func base(override, def string) string {
 type Postmark struct {
 	always
 	Token, From string
+	Stream      string // message stream ID; empty = Postmark's default ("outbound")
 	BaseURL     string
 }
 
 func (p *Postmark) Send(ctx context.Context, m service.Mail) error {
+	body := map[string]string{"From": p.From, "To": m.To, "Subject": m.Subject, "TextBody": m.Body}
+	if p.Stream != "" {
+		body["MessageStream"] = p.Stream
+	}
 	return postJSON(ctx, base(p.BaseURL, "https://api.postmarkapp.com")+"/email",
-		map[string]string{"X-Postmark-Server-Token": p.Token},
-		map[string]string{"From": p.From, "To": m.To, "Subject": m.Subject, "TextBody": m.Body}, 200)
+		map[string]string{"X-Postmark-Server-Token": p.Token}, body, 200)
 }
 
 // SendGrid v3 mail/send (202 Accepted).

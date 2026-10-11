@@ -75,7 +75,7 @@ Admins pick a provider in the webui (Admin → Email) and fill that provider's f
 
 | Provider | Transport | Fields |
 |---|---|---|
-| Postmark | `POST /email`, `X-Postmark-Server-Token` | server token, From |
+| Postmark | `POST /email`, `X-Postmark-Server-Token`; optional `MessageStream` (omitted = default `outbound`) | server token, message stream (optional), From |
 | Amazon SES | aws-sdk-go-v2 `sesv2.SendEmail`, static IAM credentials | region, access key id, secret, From |
 | Mailgun | `POST /v3/<domain>/messages`, basic `api:<key>`, US/EU base | api key, domain, region, From |
 | SendGrid | `POST /v3/mail/send`, Bearer | api key, From |

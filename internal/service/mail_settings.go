@@ -50,6 +50,7 @@ var fromField = MailField{Name: "from", Label: "From address", Help: "e.g. goCha
 var MailProviders = []MailProvider{
 	{ID: "postmark", Label: "Postmark", Fields: []MailField{
 		{Name: "server_token", Label: "Server API token", Secret: true, Required: true},
+		{Name: "message_stream", Label: "Message stream", Help: "Optional. Leave blank for the default transactional stream (outbound). Use a transactional stream, not a broadcast one"},
 		fromField,
 	}},
 	{ID: "ses", Label: "Amazon SES", Fields: []MailField{
