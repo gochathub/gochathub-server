@@ -28,6 +28,7 @@ No PostgREST, Redis, Kafka, RabbitMQ, or microservices. PostgreSQL is authoritat
 - **Push notifications** — UnifiedPush (self-hosted ntfy) and Web Push (RFC 8291 encrypted payloads); only identifiers go out, never message content.
 - **Avatars** — uploaded through attachments with Gravatar fallback.
 - **Inbound webhooks** — Postmark inbound email (and Cloudflare Email Workers) post into a fixed room or DM as a bot user; see [Inbound webhooks](#inbound-webhooks).
+- **Rocket.Chat link (optional)** — a user can link their own Rocket.Chat account and see their direct messages, private groups and channels as rooms here, with replies posted through. Off unless `RC_PAT_KEY` is set; uses only Rocket.Chat's public REST API. See [`docs/ROCKETCHAT-INTEGRATION.md`](docs/ROCKETCHAT-INTEGRATION.md).
 - **Admin CLI** — users, rooms, tokens, and webhooks managed from the same service layer as the HTTP API.
 
 ## Architecture
@@ -66,6 +67,22 @@ gochathub-server serve
 ```
 
 The server is now listening on `:8080`. The OpenAPI contract lives in [`api/openapi.yaml`](api/openapi.yaml).
+
+## Migrating from Rocket.Chat
+
+Only relevant if you are moving off an existing Rocket.Chat server; new installs can skip this section.
+
+`rcmigrate` imports a `mongodump --archive` of the `rocketchat` database (no MongoDB needed at import time):
+
+```bash
+gochathub-server rcmigrate --archive backup.archive [--dry-run] [--skip-files]
+```
+
+- Carries over users, rooms, messages, attachments and avatars, and TOTP two-factor enrollments (email-2FA is dropped).
+- Legacy password hashes import as-is and are re-hashed to Argon2id on first login. Session tokens and other password material are not carried over.
+- Re-runs are idempotent, so you can import a fresh dump for a final cutover.
+
+Options and details: [`docs/CLI.md`](docs/CLI.md#rcmigrate-rocketchat-import).
 
 ## CLI
 
@@ -185,3 +202,9 @@ PRs welcome. Keep the OpenAPI contract in sync (`python3 scripts/contract-check.
 ## License
 
 [MIT](LICENSE) © Brian Tafoya
+
+## Acknowledgements and trademarks
+
+goChatHub is an independent project. It is not affiliated with, endorsed by, or sponsored by Rocket.Chat Technologies Corp. The optional import and link features work with data and the public REST API of [Rocket.Chat](https://github.com/RocketChat/Rocket.Chat) (MIT, outside its `ee/` directories); no Rocket.Chat source code is included. Thanks to the Rocket.Chat project for documenting that API.
+
+Rocket.Chat is a trademark of Rocket.Chat Technologies Corp. Cloudflare and Turnstile are trademarks of Cloudflare, Inc. All other names belong to their owners and are used only to identify compatibility.
