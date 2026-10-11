@@ -193,11 +193,11 @@ The integration suite is rerunnable and applies migrations to the test database 
 
 ## Security
 
-The server is designed to be Internet-facing: Argon2id password hashing, hashed token storage, per-visitor rate limiting, strict attachment authorization with presigned uploads, push-URL SSRF rejection, request size limits, rich-text sanitization, and audit logging. Please report vulnerabilities privately via [GitHub security advisories](https://github.com/gochathub/gochathub-server/security/advisories/new) rather than public issues.
+The server is designed to be Internet-facing: Argon2id password hashing, hashed token storage, per-visitor rate limiting, strict attachment authorization with presigned uploads, push-URL SSRF rejection, request size limits, rich-text sanitization, and audit logging. Please report vulnerabilities privately through the [Security tab](https://github.com/gochathub/gochathub-server/security/advisories/new) rather than public issues. See the [security policy](https://github.com/gochathub/.github/blob/main/SECURITY.md).
 
 ## Contributing
 
-PRs welcome. Keep the OpenAPI contract in sync (`python3 scripts/contract-check.py`) and attach tests for any authorization change.
+See the [contributing guide](https://github.com/gochathub/.github/blob/main/CONTRIBUTING.md) and [code of conduct](https://github.com/gochathub/.github/blob/main/CODE_OF_CONDUCT.md). PRs welcome. Keep the OpenAPI contract in sync (`python3 scripts/contract-check.py`) and attach tests for any authorization change.
 
 ## License
 
