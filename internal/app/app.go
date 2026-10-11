@@ -65,12 +65,10 @@ func Assemble(st *store.Store, cfg *config.Config, log *slog.Logger) (*service.A
 		svc.Auth.VerifyCaptcha = (&service.Turnstile{Secret: cfg.TurnstileSecret, Hostname: cfg.TurnstileHostname}).Verify
 	}
 
-	// outbound mail: settings live in the database (admin UI); SECRETS_KEY seals the SMTP password
+	// outbound mail: settings live in the database (admin UI); SECRETS_KEY seals provider credentials
 	svc.MailCfg.Key = service.NewSecretsKey(cfg.SecretsKey)
 	svc.MailCfg.AllowHosts = cfg.MailAllowHosts
-	svc.MailCfg.NewSender = func(c service.SMTPConfig) service.Mailer {
-		return &mail.SMTP{Host: c.Host, Port: c.Port, User: c.User, Pass: c.Pass, From: c.From, TLS: c.TLS}
-	}
+	svc.MailCfg.NewSender = mail.New
 
 	hub := ws.NewHub(log)
 	hub.App = svc

@@ -133,30 +133,6 @@ func (a *API) handleGetMailSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, v)
 }
 
-func (a *API) handlePutMailSettings(w http.ResponseWriter, r *http.Request) {
-	p, _ := principalFrom(r.Context())
-	var in struct {
-		Host     string  `json:"host"`
-		Port     string  `json:"port"`
-		User     string  `json:"user"`
-		Password *string `json:"password"`
-		TLS      string  `json:"tls"`
-		From     string  `json:"from"`
-	}
-	if err := decodeJSON(r, &in); err != nil {
-		writeError(w, 400, "validation", "bad body")
-		return
-	}
-	v, err := a.svc.MailCfg.Save(r.Context(), p, service.MailSettingsInput{
-		Host: in.Host, Port: in.Port, User: in.User, Password: in.Password, TLS: in.TLS, From: in.From,
-	})
-	if err != nil {
-		a.mapError(w, err)
-		return
-	}
-	writeJSON(w, 200, v)
-}
-
 func (a *API) handleTestMailSettings(w http.ResponseWriter, r *http.Request) {
 	p, _ := principalFrom(r.Context())
 	var in struct {
@@ -171,4 +147,50 @@ func (a *API) handleTestMailSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(204)
+}
+
+// handleSetActiveMail switches the active provider ("" = mail off).
+func (a *API) handleSetActiveMail(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in struct {
+		Active string `json:"active"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	v, err := a.svc.MailCfg.SetActive(r.Context(), p, in.Active)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (a *API) handleSaveMailProvider(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	var in struct {
+		Values   map[string]string `json:"values"`
+		Activate bool              `json:"activate"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, 400, "validation", "bad body")
+		return
+	}
+	v, err := a.svc.MailCfg.Save(r.Context(), p, r.PathValue("provider"), in.Values, in.Activate)
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (a *API) handleClearMailProvider(w http.ResponseWriter, r *http.Request) {
+	p, _ := principalFrom(r.Context())
+	v, err := a.svc.MailCfg.Clear(r.Context(), p, r.PathValue("provider"))
+	if err != nil {
+		a.mapError(w, err)
+		return
+	}
+	writeJSON(w, 200, v)
 }

@@ -1036,8 +1036,9 @@ paths:
       security: [{ bearerAuth: [] }]
       operationId: getMailSettings
       description: >
-        Admin only (ADR-026). Outbound SMTP configuration used for signup
-        invites. The password is never returned (`has_password`).
+        Admin only (ADR-026). Every supported mail provider with its form
+        fields, saved non-secret values and `has_secret` flags (secrets are
+        write-only), plus which one is active.
       responses:
         "200":
           description: Current settings
@@ -1050,20 +1051,24 @@ paths:
     put:
       tags: [admin]
       security: [{ bearerAuth: [] }]
-      operationId: putMailSettings
+      operationId: setActiveMailProvider
       description: >
-        Save the SMTP configuration. Omit `password` to keep the stored one;
-        an empty `host` clears the configuration (signup invites switch off).
-        400 when the server has no `SECRETS_KEY` (it seals the password).
+        Switch the active provider, or turn mail off with an empty `active`.
+        The provider must already be fully configured (400 otherwise). Saved
+        configurations of other providers are kept.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PutMailSettingsRequest"
+              type: object
+              required: [active]
+              properties:
+                active:
+                  type: string
       responses:
         "200":
-          description: Saved
+          description: Updated settings
           content:
             application/json:
               schema:
@@ -1072,6 +1077,60 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/mail-settings/{provider}:
+    parameters:
+      - in: path
+        name: provider
+        required: true
+        schema:
+          type: string
+          enum: [postmark, ses, mailgun, sendgrid, resend, brevo, smtp]
+    put:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: saveMailProvider
+      description: >
+        Save one provider's configuration. Secret fields left empty keep the
+        stored value; `activate` also makes it the active provider. 400 when
+        the server has no `SECRETS_KEY` (it seals the credentials).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveMailProviderRequest"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      operationId: clearMailProvider
+      description: Wipe the provider's stored credentials; deactivates it if active.
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MailSettings"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /admin/mail-settings/test:
     post:
@@ -2593,50 +2652,80 @@ components:
         user_id:
           type: string
 
-    MailSettings:
+    MailField:
       type: object
-      required: [host, port, user, tls, from, has_password, configured, encryption_available]
+      required: [name, label, secret, required]
       properties:
-        host:
+        name:
           type: string
-        port:
+        label:
           type: string
-        user:
+        help:
           type: string
-        tls:
-          type: string
-          enum: [starttls, implicit, none, ""]
-        from:
-          type: string
-        has_password:
+        secret:
           type: boolean
+          description: Write-only; never returned, only `has_secret`.
+        required:
+          type: boolean
+        default:
+          type: string
+        options:
+          type: array
+          items:
+            type: string
+          description: Non-empty means a select.
+
+    MailProvider:
+      type: object
+      required: [id, label, fields, values, has_secret, configured]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/MailField"
+        values:
+          type: object
+          additionalProperties:
+            type: string
+          description: Saved non-secret values (field defaults filled in).
+        has_secret:
+          type: object
+          additionalProperties:
+            type: boolean
         configured:
           type: boolean
-          description: Invites can be sent (host saved and SECRETS_KEY set).
+          description: Every required field is saved.
+
+    MailSettings:
+      type: object
+      required: [active, providers, encryption_available]
+      properties:
+        active:
+          type: string
+          description: Provider id; empty means mail (and signup invites) are off.
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/MailProvider"
         encryption_available:
           type: boolean
-          description: False when the server has no SECRETS_KEY; settings cannot be saved.
+          description: False when the server has no SECRETS_KEY; nothing can be saved.
 
-    PutMailSettingsRequest:
+    SaveMailProviderRequest:
       type: object
-      required: [host, tls, from]
+      required: [values]
       properties:
-        host:
-          type: string
-          description: Bare hostname or IP; empty clears the configuration.
-        port:
-          type: string
-          description: Defaults to 587.
-        user:
-          type: string
-        password:
-          type: string
-          description: Omit to keep the stored password.
-        tls:
-          type: string
-          enum: [starttls, implicit, none]
-        from:
-          type: string
+        values:
+          type: object
+          additionalProperties:
+            type: string
+          description: Field name to value; an empty secret keeps the stored one.
+        activate:
+          type: boolean
 
     CreateSignupInviteRequest:
       type: object

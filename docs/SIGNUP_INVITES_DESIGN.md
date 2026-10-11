@@ -69,20 +69,21 @@ Complete(ctx, in CompleteInput, ua string, ip *string) (token string, store.User
 - **CLI wins**: `CreateUser` runs in `WithTx` and revokes any open invite for its email.
 - Email stored lowercase/trimmed; same rule as `CreateUser`.
 
-## Mail transport (`internal/mail`, stdlib `net/smtp`) + settings
+## Mail providers and settings
 
-`SMTP` implements `Mailer`. Configuration is **admin-edited in the webui** (Admin → Email), stored in `app_config` key `mail.smtp` as JSON `{host, port, user, pass_enc, tls, from}`; `service.MailSettings` is itself the `Mailer` the invite service sends through, reading the saved config per send (edits apply immediately).
+Admins pick a provider in the webui (Admin → Email) and fill that provider's form; nothing is configured by env except `SECRETS_KEY` (seals credentials) and optional `MAIL_ALLOW_HOSTS` (SMTP relays on private addresses).
 
-| Piece | Behavior |
-|---|---|
-| `SECRETS_KEY` (env) | derives an AES-256-GCM key (sha256); seals `pass_enc`. Unset → `PUT` is a 400 and the feature stays off |
-| `MAIL_ALLOW_HOSTS` (env) | hosts exempt from the private-address rejection (self-hosted relay) |
-| host | bare hostname/IP; `push.CheckHost` at every send; empty host on `PUT` clears the config |
-| tls | `starttls` / `implicit` / `none`; auth over `none` is refused |
-| password | write-only: omitted on `PUT` keeps the stored one; responses carry `has_password` only |
-| `ORIGIN` | required for the invite link (checked when sending) |
+| Provider | Transport | Fields |
+|---|---|---|
+| Postmark | `POST /email`, `X-Postmark-Server-Token` | server token, From |
+| Amazon SES | aws-sdk-go-v2 `sesv2.SendEmail`, static IAM credentials | region, access key id, secret, From |
+| Mailgun | `POST /v3/<domain>/messages`, basic `api:<key>`, US/EU base | api key, domain, region, From |
+| SendGrid | `POST /v3/mail/send`, Bearer | api key, From |
+| Resend | `POST /emails`, Bearer | api key, From |
+| Brevo | `POST /v3/smtp/email`, `api-key` (HTML body required, generated from the text) | api key, From |
+| SMTP | stdlib `net/smtp`; host passes `CheckHost` | host, port, TLS, user, password, From |
 
-`POST /admin/mail-settings/test` sends a message through the saved settings. Header injection: reject CR/LF in To/Subject/From. A Postmark HTTP `Mailer` is a later drop-in.
+Storage: `app_config` key `mail.settings` = `{active, providers:{id:{field:value}}}`; secret fields are `base64(nonce|AES-GCM ciphertext)`. API: `GET /admin/mail-settings` (providers + field definitions + `has_secret`), `PUT /admin/mail-settings` (`{active}`, empty = off), `PUT|DELETE /admin/mail-settings/{provider}`, `POST /admin/mail-settings/test`. Empty secret on save keeps the stored one. The first cut's `mail.smtp` is read as the active `smtp` provider until the next save. `ORIGIN` is required for the invite link (checked when sending). Header injection: values with CR/LF are rejected.
 
 Body (plain text):
 

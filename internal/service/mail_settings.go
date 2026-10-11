@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -19,29 +20,108 @@ import (
 	"github.com/gochathub/gochathub-server/internal/push"
 )
 
-const mailConfigKey = "mail.smtp"
+const (
+	mailConfigKey       = "mail.settings"
+	legacyMailConfigKey = "mail.smtp" // single-provider SMTP config (first ADR-026 cut)
+)
 
-// SMTPConfig is the decrypted outbound mail configuration.
-type SMTPConfig struct{ Host, Port, User, Pass, TLS, From string }
+// MailField describes one input of a provider form. The webui renders the form
+// from this, so provider knowledge lives only here and in internal/mail.
+type MailField struct {
+	Name     string   `json:"name"`
+	Label    string   `json:"label"`
+	Help     string   `json:"help,omitempty"`
+	Secret   bool     `json:"secret"`
+	Required bool     `json:"required"`
+	Default  string   `json:"default,omitempty"`
+	Options  []string `json:"options,omitempty"` // non-empty = a select
+}
 
-// MailSettings stores the SMTP configuration in app_config (password sealed
-// with SECRETS_KEY) and is itself the Mailer signup invites send through, so
-// admin edits apply without a restart. Not configured = Enabled() false.
+// MailProvider is one entry of the registry.
+type MailProvider struct {
+	ID     string      `json:"id"`
+	Label  string      `json:"label"`
+	Fields []MailField `json:"fields"`
+}
+
+var fromField = MailField{Name: "from", Label: "From address", Help: "e.g. goChatHub <chat@example.com>; must be a verified sender at the provider", Required: true}
+
+// MailProviders is the provider registry (order = UI order).
+var MailProviders = []MailProvider{
+	{ID: "postmark", Label: "Postmark", Fields: []MailField{
+		{Name: "server_token", Label: "Server API token", Secret: true, Required: true},
+		fromField,
+	}},
+	{ID: "ses", Label: "Amazon SES", Fields: []MailField{
+		{Name: "region", Label: "AWS region", Required: true, Default: "us-east-1", Help: "e.g. us-east-1"},
+		{Name: "access_key_id", Label: "Access key ID", Required: true, Help: "Use a dedicated IAM user limited to ses:SendEmail"},
+		{Name: "secret_access_key", Label: "Secret access key", Secret: true, Required: true},
+		fromField,
+	}},
+	{ID: "mailgun", Label: "Mailgun", Fields: []MailField{
+		{Name: "api_key", Label: "API key", Secret: true, Required: true, Help: "A domain sending key is enough"},
+		{Name: "domain", Label: "Sending domain", Required: true, Help: "e.g. mg.example.com"},
+		{Name: "region", Label: "Region", Required: true, Default: "us", Options: []string{"us", "eu"}, Help: "Fixed when the domain was created"},
+		fromField,
+	}},
+	{ID: "sendgrid", Label: "SendGrid", Fields: []MailField{
+		{Name: "api_key", Label: "API key", Secret: true, Required: true, Help: "Needs Mail Send permission"},
+		fromField,
+	}},
+	{ID: "resend", Label: "Resend", Fields: []MailField{
+		{Name: "api_key", Label: "API key", Secret: true, Required: true},
+		fromField,
+	}},
+	{ID: "brevo", Label: "Brevo", Fields: []MailField{
+		{Name: "api_key", Label: "API key", Secret: true, Required: true},
+		fromField,
+	}},
+	{ID: "smtp", Label: "SMTP server", Fields: []MailField{
+		{Name: "host", Label: "Host", Required: true, Help: "e.g. smtp.example.com"},
+		{Name: "port", Label: "Port", Required: true, Default: "587"},
+		{Name: "tls", Label: "Encryption", Required: true, Default: "starttls", Options: []string{"starttls", "implicit", "none"}, Help: "none refuses login"},
+		{Name: "user", Label: "Username", Help: "Optional"},
+		{Name: "password", Label: "Password", Secret: true},
+		fromField,
+	}},
+}
+
+func providerByID(id string) (MailProvider, bool) {
+	for _, p := range MailProviders {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return MailProvider{}, false
+}
+
+// MailSettings keeps one saved configuration per provider plus the active
+// one, in app_config. Secret fields are sealed with SECRETS_KEY; it is itself
+// the Mailer signup invites send through, so admin edits apply immediately.
 type MailSettings struct {
 	App        *App
 	Key        *[32]byte // nil: SECRETS_KEY unset, the feature stays off
-	AllowHosts []string  // exempt from the private-address rejection (MAIL_ALLOW_HOSTS)
-	// NewSender builds the transport; wired in app.Assemble (service must not import internal/mail).
-	NewSender func(SMTPConfig) Mailer
+	AllowHosts []string  // SMTP hosts exempt from the private-address rejection (MAIL_ALLOW_HOSTS)
+	// NewSender builds the transport for a provider; wired in app.Assemble
+	// (service must not import internal/mail).
+	NewSender func(provider string, values map[string]string) (Mailer, error)
 }
 
-type storedSMTP struct {
-	Host    string `json:"host"`
-	Port    string `json:"port"`
-	User    string `json:"user"`
-	PassEnc string `json:"pass_enc"` // base64(nonce|ciphertext)
-	TLS     string `json:"tls"`
-	From    string `json:"from"`
+// stored is the app_config value: secret fields hold base64(nonce|ciphertext).
+type storedMail struct {
+	Active    string                       `json:"active"`
+	Providers map[string]map[string]string `json:"providers"`
+}
+
+func (m *MailSettings) aead() (cipher.AEAD, error) {
+	if m.Key == nil {
+		return nil, errors.New("SECRETS_KEY is not set")
+	}
+	b, err := aes.NewCipher(m.Key[:])
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(b)
 }
 
 func (m *MailSettings) seal(plain string) (string, error) {
@@ -57,9 +137,6 @@ func (m *MailSettings) seal(plain string) (string, error) {
 }
 
 func (m *MailSettings) open(enc string) (string, error) {
-	if enc == "" {
-		return "", nil
-	}
 	raw, err := base64.StdEncoding.DecodeString(enc)
 	if err != nil {
 		return "", err
@@ -69,21 +146,10 @@ func (m *MailSettings) open(enc string) (string, error) {
 		return "", err
 	}
 	if len(raw) < aead.NonceSize() {
-		return "", errors.New("smtp password: ciphertext too short")
+		return "", errors.New("mail secret: ciphertext too short")
 	}
 	plain, err := aead.Open(nil, raw[:aead.NonceSize()], raw[aead.NonceSize():], nil)
 	return string(plain), err
-}
-
-func (m *MailSettings) aead() (cipher.AEAD, error) {
-	if m.Key == nil {
-		return nil, errors.New("SECRETS_KEY is not set")
-	}
-	b, err := aes.NewCipher(m.Key[:])
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(b)
 }
 
 // NewSecretsKey derives the 32-byte key from the SECRETS_KEY env value.
@@ -95,50 +161,114 @@ func NewSecretsKey(secret string) *[32]byte {
 	return &k
 }
 
-// load returns the stored config; ok=false when nothing is configured.
-func (m *MailSettings) load(ctx context.Context) (stored storedSMTP, ok bool, err error) {
+// load reads the stored settings, upgrading the single-provider SMTP value
+// of the first ADR-026 cut in memory (the next save writes the new key).
+func (m *MailSettings) load(ctx context.Context) (storedMail, error) {
+	st := storedMail{Providers: map[string]map[string]string{}}
 	raw, err := m.App.Store.GetConfigValue(ctx, mailConfigKey)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && raw == "") {
-		return stored, false, nil
+	switch {
+	case err == nil && raw != "":
+		if err := json.Unmarshal([]byte(raw), &st); err != nil {
+			return st, fmt.Errorf("decode mail settings: %w", err)
+		}
+		if st.Providers == nil {
+			st.Providers = map[string]map[string]string{}
+		}
+		return st, nil
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		return st, fmt.Errorf("load mail settings: %w", err)
+	}
+	old, err := m.App.Store.GetConfigValue(ctx, legacyMailConfigKey)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && old == "") {
+		return st, nil
 	}
 	if err != nil {
-		return stored, false, fmt.Errorf("load mail settings: %w", err)
+		return st, fmt.Errorf("load legacy mail settings: %w", err)
 	}
-	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
-		return stored, false, fmt.Errorf("decode mail settings: %w", err)
+	var l struct {
+		Host, Port, User, TLS, From string
+		PassEnc                     string `json:"pass_enc"`
 	}
-	return stored, stored.Host != "", nil
+	if err := json.Unmarshal([]byte(old), &l); err != nil {
+		return st, fmt.Errorf("decode legacy mail settings: %w", err)
+	}
+	if l.Host != "" {
+		st.Providers["smtp"] = map[string]string{"host": l.Host, "port": l.Port, "tls": l.TLS, "user": l.User, "password": l.PassEnc, "from": l.From}
+		st.Active = "smtp"
+	}
+	return st, nil
 }
 
-// Enabled: transport wired, key present and a host saved.
+func (m *MailSettings) store(ctx context.Context, st storedMail) error {
+	raw, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return m.App.Store.SetConfigValue(ctx, mailConfigKey, string(raw))
+}
+
+// complete reports whether every required field of the provider is stored.
+func complete(p MailProvider, vals map[string]string) bool {
+	for _, f := range p.Fields {
+		if f.Required && vals[f.Name] == "" {
+			return false
+		}
+	}
+	return len(vals) > 0
+}
+
+// Enabled: transport wired, key present and an active provider fully configured.
 func (m *MailSettings) Enabled(ctx context.Context) bool {
 	if m.Key == nil || m.NewSender == nil {
 		return false
 	}
-	_, ok, err := m.load(ctx)
-	return ok && err == nil
+	st, err := m.load(ctx)
+	if err != nil || st.Active == "" {
+		return false
+	}
+	p, ok := providerByID(st.Active)
+	return ok && complete(p, st.Providers[st.Active])
+}
+
+// values returns the decrypted field values of a provider.
+func (m *MailSettings) values(p MailProvider, stored map[string]string) (map[string]string, error) {
+	out := make(map[string]string, len(p.Fields))
+	for _, f := range p.Fields {
+		v := stored[f.Name]
+		if f.Secret && v != "" {
+			var err error
+			if v, err = m.open(v); err != nil {
+				return nil, fmt.Errorf("open %s: %w", f.Name, err)
+			}
+		}
+		out[f.Name] = v
+	}
+	return out, nil
 }
 
 func (m *MailSettings) sender(ctx context.Context) (Mailer, error) {
-	st, ok, err := m.load(ctx)
+	st, err := m.load(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !ok || m.Key == nil || m.NewSender == nil {
+	p, ok := providerByID(st.Active)
+	if !ok || m.Key == nil || m.NewSender == nil || !complete(p, st.Providers[st.Active]) {
 		return nil, errors.New("mail is not configured")
 	}
-	pass, err := m.open(st.PassEnc)
+	vals, err := m.values(p, st.Providers[st.Active])
 	if err != nil {
-		return nil, fmt.Errorf("open smtp password: %w", err)
+		return nil, err
 	}
-	// ponytail: checked per send (resolution can change); a DNS-rebinding race between check and dial remains, admin-only surface
-	if err := push.CheckHost(ctx, "https://"+st.Host, m.AllowHosts); err != nil {
-		return nil, fmt.Errorf("smtp host rejected: %w", err)
+	if p.ID == "smtp" {
+		// ponytail: checked per send (resolution can change); a DNS-rebinding race between check and dial remains, admin-only surface
+		if err := push.CheckHost(ctx, "https://"+vals["host"], m.AllowHosts); err != nil {
+			return nil, fmt.Errorf("smtp host rejected: %w", err)
+		}
 	}
-	return m.NewSender(SMTPConfig{Host: st.Host, Port: st.Port, User: st.User, Pass: pass, TLS: st.TLS, From: st.From}), nil
+	return m.NewSender(p.ID, vals)
 }
 
-// Send delivers through the currently saved configuration.
+// Send delivers through the active provider.
 func (m *MailSettings) Send(ctx context.Context, msg Mail) error {
 	s, err := m.sender(ctx)
 	if err != nil {
@@ -147,108 +277,215 @@ func (m *MailSettings) Send(ctx context.Context, msg Mail) error {
 	return s.Send(ctx, msg)
 }
 
-// MailSettingsView never carries the password.
+// MailProviderView is one provider's form plus its saved state; secret values
+// are never included, only has_secret flags.
+type MailProviderView struct {
+	MailProvider
+	Values     map[string]string `json:"values"` // non-secret fields (defaults filled in)
+	HasSecret  map[string]bool   `json:"has_secret"`
+	Configured bool              `json:"configured"`
+}
+
 type MailSettingsView struct {
-	Host                string `json:"host"`
-	Port                string `json:"port"`
-	User                string `json:"user"`
-	TLS                 string `json:"tls"`
-	From                string `json:"from"`
-	HasPassword         bool   `json:"has_password"`
-	Configured          bool   `json:"configured"`
-	EncryptionAvailable bool   `json:"encryption_available"`
+	Active              string             `json:"active"` // "" = mail off
+	Providers           []MailProviderView `json:"providers"`
+	EncryptionAvailable bool               `json:"encryption_available"`
 }
 
 func (m *MailSettings) Get(ctx context.Context, p Principal) (MailSettingsView, error) {
 	if !p.IsAdmin() {
 		return MailSettingsView{}, ErrForbidden
 	}
-	st, ok, err := m.load(ctx)
+	st, err := m.load(ctx)
 	if err != nil {
 		return MailSettingsView{}, err
 	}
-	v := MailSettingsView{EncryptionAvailable: m.Key != nil}
-	if ok {
-		v = MailSettingsView{Host: st.Host, Port: st.Port, User: st.User, TLS: st.TLS, From: st.From,
-			HasPassword: st.PassEnc != "", Configured: m.Enabled(ctx), EncryptionAvailable: v.EncryptionAvailable}
+	v := MailSettingsView{Active: st.Active, EncryptionAvailable: m.Key != nil, Providers: make([]MailProviderView, 0, len(MailProviders))}
+	for _, def := range MailProviders {
+		saved := st.Providers[def.ID]
+		pv := MailProviderView{MailProvider: def, Values: map[string]string{}, HasSecret: map[string]bool{}, Configured: complete(def, saved)}
+		for _, f := range def.Fields {
+			switch {
+			case f.Secret:
+				pv.HasSecret[f.Name] = saved[f.Name] != ""
+			case saved[f.Name] != "":
+				pv.Values[f.Name] = saved[f.Name]
+			default:
+				pv.Values[f.Name] = f.Default
+			}
+		}
+		v.Providers = append(v.Providers, pv)
 	}
 	return v, nil
 }
 
-// MailSettingsInput: Password nil keeps the stored one; an empty Host clears
-// the configuration (feature off).
-type MailSettingsInput struct {
-	Host, Port, User, TLS, From string
-	Password                    *string
+var (
+	sesRegionRe   = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
+	mailDomainRe  = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$`)
+	smtpHostBadRe = regexp.MustCompile(`[\s/@:]`)
+)
+
+// validate checks one provider's merged field values (secrets as stored/new).
+func validate(def MailProvider, vals map[string]string) error {
+	for _, f := range def.Fields {
+		v := vals[f.Name]
+		if len(v) > 512 || strings.ContainsAny(v, "\r\n") {
+			return bad("%s: invalid value", f.Label)
+		}
+		if f.Required && v == "" {
+			return bad("%s is required", f.Label)
+		}
+		if len(f.Options) > 0 && v != "" {
+			ok := false
+			for _, o := range f.Options {
+				ok = ok || o == v
+			}
+			if !ok {
+				return bad("%s must be one of %s", f.Label, strings.Join(f.Options, ", "))
+			}
+		}
+	}
+	if a, err := mail.ParseAddress(vals["from"]); err != nil || a.Address == "" {
+		return bad("From address must be a valid email address")
+	}
+	switch def.ID {
+	case "ses":
+		if !sesRegionRe.MatchString(vals["region"]) {
+			return bad("AWS region looks wrong (e.g. us-east-1)")
+		}
+	case "mailgun":
+		if !mailDomainRe.MatchString(vals["domain"]) {
+			return bad("Sending domain looks wrong")
+		}
+	case "smtp":
+		if smtpHostBadRe.MatchString(vals["host"]) {
+			return bad("Host must be a bare hostname or IP")
+		}
+		if n, err := strconv.Atoi(vals["port"]); err != nil || n < 1 || n > 65535 {
+			return bad("Port must be 1-65535")
+		}
+		if vals["user"] != "" && vals["tls"] == "none" {
+			return bad("SMTP login over plaintext is refused; choose starttls or implicit")
+		}
+	}
+	return nil
 }
 
-func (m *MailSettings) Save(ctx context.Context, p Principal, in MailSettingsInput) (MailSettingsView, error) {
+// Save stores one provider's configuration. Secret fields left empty keep the
+// stored value; activate makes it the active provider.
+func (m *MailSettings) Save(ctx context.Context, p Principal, providerID string, in map[string]string, activate bool) (MailSettingsView, error) {
 	if !p.IsAdmin() {
 		return MailSettingsView{}, ErrForbidden
 	}
+	def, ok := providerByID(providerID)
+	if !ok {
+		return MailSettingsView{}, ErrNotFound
+	}
 	if m.Key == nil {
-		return MailSettingsView{}, bad("SECRETS_KEY is not set on the server; it encrypts the SMTP password")
+		return MailSettingsView{}, bad("SECRETS_KEY is not set on the server; it encrypts provider credentials")
 	}
-	in.Host = strings.TrimSpace(in.Host)
-	if in.Host == "" { // clear
-		if err := m.App.Store.SetConfigValue(ctx, mailConfigKey, ""); err != nil {
-			return MailSettingsView{}, fmt.Errorf("clear mail settings: %w", err)
-		}
-		return MailSettingsView{EncryptionAvailable: true}, m.App.Store.Audit(ctx, p.UserID, "mail_settings.clear", "app_config", mailConfigKey, []byte(`{}`), nil)
-	}
-	if strings.ContainsAny(in.Host, " \t\r\n/@:") {
-		return MailSettingsView{}, bad("host must be a bare hostname or IP")
-	}
-	if in.Port == "" {
-		in.Port = "587"
-	}
-	if n, err := strconv.Atoi(in.Port); err != nil || n < 1 || n > 65535 {
-		return MailSettingsView{}, bad("port must be 1-65535")
-	}
-	switch in.TLS {
-	case "starttls", "implicit", "none":
-	default:
-		return MailSettingsView{}, bad("tls must be starttls, implicit or none")
-	}
-	in.From = strings.TrimSpace(in.From)
-	if a, err := mail.ParseAddress(in.From); err != nil || strings.ContainsAny(in.From, "\r\n") || a.Address == "" {
-		return MailSettingsView{}, bad("from must be a valid email address")
-	}
-	if strings.ContainsAny(in.User, "\r\n") {
-		return MailSettingsView{}, bad("user contains a line break")
-	}
-	if in.User != "" && in.TLS == "none" {
-		return MailSettingsView{}, bad("SMTP authentication over plaintext is refused; choose starttls or implicit")
-	}
-	st := storedSMTP{Host: in.Host, Port: in.Port, User: in.User, TLS: in.TLS, From: in.From}
-	if in.User != "" { // password only meaningful with a user
-		if in.Password != nil {
-			enc, err := m.seal(*in.Password)
-			if err != nil {
-				return MailSettingsView{}, err
-			}
-			st.PassEnc = enc
-		} else if old, _, err := m.load(ctx); err != nil {
-			return MailSettingsView{}, err
-		} else {
-			st.PassEnc = old.PassEnc
-		}
-	}
-	raw, err := json.Marshal(st)
+	st, err := m.load(ctx)
 	if err != nil {
 		return MailSettingsView{}, err
 	}
-	if err := m.App.Store.SetConfigValue(ctx, mailConfigKey, string(raw)); err != nil {
+	old := st.Providers[providerID]
+	merged := make(map[string]string, len(def.Fields)) // plaintext for validation
+	next := make(map[string]string, len(def.Fields))   // what gets stored
+	for _, f := range def.Fields {
+		v := strings.TrimSpace(in[f.Name])
+		switch {
+		case f.Secret && v == "": // keep
+			next[f.Name] = old[f.Name]
+			merged[f.Name] = old[f.Name]
+		case f.Secret:
+			enc, err := m.seal(v)
+			if err != nil {
+				return MailSettingsView{}, err
+			}
+			next[f.Name], merged[f.Name] = enc, v
+		default:
+			if v == "" {
+				v = f.Default
+			}
+			next[f.Name], merged[f.Name] = v, v
+		}
+	}
+	if err := validate(def, merged); err != nil {
+		return MailSettingsView{}, err
+	}
+	st.Providers[providerID] = next
+	if activate {
+		st.Active = providerID
+	}
+	if err := m.store(ctx, st); err != nil {
 		return MailSettingsView{}, fmt.Errorf("save mail settings: %w", err)
 	}
-	if err := m.App.Store.Audit(ctx, p.UserID, "mail_settings.update", "app_config", mailConfigKey, []byte(`{}`), nil); err != nil {
+	action := "mail_settings.update"
+	if activate {
+		action = "mail_settings.activate"
+	}
+	if err := m.App.Store.Audit(ctx, p.UserID, action, "mail_provider", providerID, []byte(`{}`), nil); err != nil {
 		return MailSettingsView{}, err
 	}
 	return m.Get(ctx, p)
 }
 
-// Test sends one message through the saved configuration so an admin can
-// verify it; the SMTP error is returned to the (admin) caller.
+// SetActive switches the active provider; "" turns mail off. The provider
+// must already be fully configured.
+func (m *MailSettings) SetActive(ctx context.Context, p Principal, providerID string) (MailSettingsView, error) {
+	if !p.IsAdmin() {
+		return MailSettingsView{}, ErrForbidden
+	}
+	st, err := m.load(ctx)
+	if err != nil {
+		return MailSettingsView{}, err
+	}
+	if providerID != "" {
+		def, ok := providerByID(providerID)
+		if !ok {
+			return MailSettingsView{}, ErrNotFound
+		}
+		if !complete(def, st.Providers[providerID]) {
+			return MailSettingsView{}, bad("%s is not configured yet; save its settings first", def.Label)
+		}
+	}
+	st.Active = providerID
+	if err := m.store(ctx, st); err != nil {
+		return MailSettingsView{}, fmt.Errorf("save mail settings: %w", err)
+	}
+	if err := m.App.Store.Audit(ctx, p.UserID, "mail_settings.activate", "mail_provider", providerID, []byte(`{}`), nil); err != nil {
+		return MailSettingsView{}, err
+	}
+	return m.Get(ctx, p)
+}
+
+// Clear wipes one provider's stored credentials (and deactivates it).
+func (m *MailSettings) Clear(ctx context.Context, p Principal, providerID string) (MailSettingsView, error) {
+	if !p.IsAdmin() {
+		return MailSettingsView{}, ErrForbidden
+	}
+	if _, ok := providerByID(providerID); !ok {
+		return MailSettingsView{}, ErrNotFound
+	}
+	st, err := m.load(ctx)
+	if err != nil {
+		return MailSettingsView{}, err
+	}
+	delete(st.Providers, providerID)
+	if st.Active == providerID {
+		st.Active = ""
+	}
+	if err := m.store(ctx, st); err != nil {
+		return MailSettingsView{}, fmt.Errorf("save mail settings: %w", err)
+	}
+	if err := m.App.Store.Audit(ctx, p.UserID, "mail_settings.clear", "mail_provider", providerID, []byte(`{}`), nil); err != nil {
+		return MailSettingsView{}, err
+	}
+	return m.Get(ctx, p)
+}
+
+// Test sends one message through the active provider so an admin can verify
+// it; the provider's error is returned to the (admin) caller.
 func (m *MailSettings) Test(ctx context.Context, p Principal, to string) error {
 	if !p.IsAdmin() {
 		return ErrForbidden
@@ -258,7 +495,7 @@ func (m *MailSettings) Test(ctx context.Context, p Principal, to string) error {
 		return bad("to must be a valid address")
 	}
 	if !m.Enabled(ctx) {
-		return bad("mail is not configured (save settings first; SECRETS_KEY must be set)")
+		return bad("no active mail provider (save and activate one first; SECRETS_KEY must be set)")
 	}
 	if err := m.Send(ctx, Mail{To: to, Subject: "goChatHub mail test", Body: "This is a test message from your goChatHub server. Mail delivery works.\n"}); err != nil {
 		return bad("test send failed: %v", err)
